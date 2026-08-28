@@ -1,0 +1,81 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://assets/hikrobot_gs200/hikrobot_gs200.glb" id="1_camera"]
+[ext_resource type="Script" path="res://scripts/editor_orbit_camera.gd" id="2_orbit"]
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
+sky_top_color = Color(0.018, 0.027, 0.045, 1)
+sky_horizon_color = Color(0.16, 0.20, 0.28, 1)
+ground_bottom_color = Color(0.008, 0.011, 0.018, 1)
+ground_horizon_color = Color(0.10, 0.12, 0.16, 1)
+
+[sub_resource type="Sky" id="Sky"]
+sky_material = SubResource("SkyMaterial")
+
+[sub_resource type="Environment" id="Environment"]
+background_mode = 2
+sky = SubResource("Sky")
+ambient_light_source = 3
+ambient_light_color = Color(0.62, 0.69, 0.82, 1)
+ambient_light_energy = 0.65
+tonemap_mode = 2
+
+[sub_resource type="StandardMaterial3D" id="FloorMaterial"]
+albedo_color = Color(0.035, 0.045, 0.062, 1)
+metallic = 0.32
+roughness = 0.44
+
+[sub_resource type="BoxMesh" id="FloorMesh"]
+size = Vector3(0.30, 0.003, 0.30)
+
+[sub_resource type="LabelSettings" id="TitleSettings"]
+font_size = 22
+font_color = Color(0.90, 0.94, 1, 1)
+outline_size = 4
+outline_color = Color(0.01, 0.015, 0.025, 0.85)
+
+[node name="HIKROBOTGS200Preview" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment")
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.0015, 0)
+material_override = SubResource("FloorMaterial")
+mesh = SubResource("FloorMesh")
+
+[node name="HIKROBOTGS200" parent="." instance=ExtResource("1_camera")]
+position = Vector3(0, 0.0165, 0)
+
+[node name="KeyLight" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-52, -28, 0)
+light_color = Color(0.90, 0.95, 1, 1)
+light_energy = 1.25
+shadow_enabled = true
+
+[node name="RimLight" type="OmniLight3D" parent="."]
+position = Vector3(-0.08, 0.10, -0.05)
+light_color = Color(0.34, 0.58, 1, 1)
+light_energy = 0.75
+omni_range = 0.42
+
+[node name="Camera3D" type="Camera3D" parent="."]
+current = true
+fov = 43.0
+script = ExtResource("2_orbit")
+initial_focus = Vector3(0, 0.026, 0)
+initial_yaw_degrees = 35.0
+initial_pitch_degrees = 19.0
+initial_distance = 0.19
+minimum_distance = 0.055
+maximum_distance = 1.0
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Title" type="Label" parent="UI"]
+offset_left = 24.0
+offset_top = 20.0
+offset_right = 650.0
+offset_bottom = 82.0
+text = "HIKROBOT MV-CS200-10GC  ·  20 MP  ·  C/CS LENS\n29 × 29 × 42 mm body  ·  IMX183  ·  5472 × 3648  ·  GigE"
+label_settings = SubResource("TitleSettings")

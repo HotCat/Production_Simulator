@@ -1,0 +1,29 @@
+# Godot's local import cache and editor state.
+.godot/
+
+# Blender recovery files; keep the canonical .blend sources.
+*.blend1
+*.blend2
+*.blend@
+
+# OS and editor metadata.
+.DS_Store
+._*
+*~
+.#*
+\#*\#
+
+# Local planning notes may contain credentials and are never project assets.
+myplans.txt
+
+# Incidental development captures that are not simulator source assets.
+/截屏*.png
+/截屏*.png.import
+*.mov
+*.mp4
+
+# The upstream ROS checkout is vendored as source; its repository metadata and
+# Godot-generated import sidecars do not belong in the parent repository.
+MG400_ROS/.git/
+MG400_ROS/**/*.import
+MG400_ROS/CLAUDE.md
