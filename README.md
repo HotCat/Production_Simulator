@@ -194,3 +194,31 @@ Run the standalone interactive camera preview:
 /Applications/Godot.app/Contents/MacOS/Godot \
   --path . scenes/hikrobot_gs200_preview.tscn
 ```
+
+## GS200 adjustable camera bracket
+
+The camera is supported by a floor-mounted aluminum-extrusion stand designed
+around its restored scene pose. A 100 × 120 × 12 mm base is centered at Godot
+world position `(0.4400, 0, -0.009776) m`, immediately outside the conveyor.
+Its nearest edge retains 18.37 mm of clearance from the conveyor frame.
+
+The stand uses a 30 × 30 mm vertical post, 25 × 25 mm horizontal boom, sliding
+carriage, lock knob, articulated drop link, and ball joint. The final
+28 × 32 × 4 mm plate follows the camera's tilted basis and meets its top-face
+M3 mounting pattern without changing the camera position or orientation.
+
+Files:
+
+- Godot model: `assets/hikrobot_gs200_bracket/hikrobot_gs200_bracket.glb`
+- Editable source: `source_assets/hikrobot_gs200_bracket/hikrobot_gs200_bracket.blend`
+- Blender preview: `material/generated/hikrobot_gs200_bracket_blender_render.png`
+
+Rebuild and verify:
+
+```sh
+/Applications/Blender\ 4.5.app/Contents/MacOS/Blender \
+  --background --python tools/build_hikrobot_gs200_bracket.py
+
+/Applications/Godot.app/Contents/MacOS/Godot \
+  --headless --path . --script tests/test_hikrobot_gs200_bracket.gd
+```
