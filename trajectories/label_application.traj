@@ -1,0 +1,27 @@
+# MG400 Cartesian trajectory v1
+# Coordinates are MG400/ROS X Y Z in millimetres; yaw is degrees.
+
+[trajectory]
+units = mg400-mm
+feed_mm_s = 220
+acceleration_mm_s2 = 500
+junction_deviation_mm = 1
+loop = true
+
+[waypoints]
+# X_mm  Y_mm  Z_mm  yaw_deg
+# 240 0 245 0
+# 335 0 245 0
+# 335 80 245 0
+# 240 80 245 0
+# 240 0 245 0
+
+80.6 221.0 174.0 0.0
+80.6 221.0 211.0 0.0
+229.6 162.0 170.0 0.0
+229.6 162.0 197.0 0.0
+271.6 162.0 197.0 0.0
+271.6 162.0 166.0 0.0
+271.6 162.0 225.0 0.0
+80.6 221.0 174.0 0.0
+

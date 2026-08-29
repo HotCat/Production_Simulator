@@ -10,8 +10,9 @@ lengthwise beneath the MG400 work envelope. Its editable Blender source is
 `assets/conveyor/conveyor.glb`.
 
 A thin molded product based on `material/1.jpg` through `material/5.jpg` starts
-at the conveyor center. Its verified imported dimensions are exactly
-37.95 × 46.00 × 4.00 mm, and its bottom face rests on the belt surface.
+at the conveyor infeed and continuously travels to the outfeed. Its verified
+imported dimensions are exactly 37.95 × 46.00 × 4.00 mm, and its bottom face
+rests on the belt surface throughout the loop.
 
 A dimensioned label stripper/emitter is anchored by its emitted-label center
 at MG400 coordinates `X 53.0, Y 231.4, Z 150.4 mm`. In Godot Y-up world space
@@ -30,10 +31,10 @@ Open this directory in Godot 4 and run `main.tscn`, or use:
 /Applications/Godot.app/Contents/MacOS/Godot --path .
 ```
 
-The default mode follows an automatic Cartesian figure-eight. Press Space for
-manual jog mode, then use the arrow keys for the floor plane, R/F for height,
-and Q/E for tool yaw. Press `0` or Mac Delete to return the target to a known
-reachable point.
+The default mode follows a closed, lookahead-planned Cartesian waypoint loop.
+Press Space for manual jog mode, then use the arrow keys for the floor plane,
+R/F for height, and Q/E for tool yaw. Press `0` or Mac Delete to return the
+target to a known reachable point.
 
 ### Camera controls
 
@@ -48,6 +49,30 @@ reachable point.
 The information overlay continuously displays the camera world position plus
 its orbit yaw, pitch, distance, and focus point. These values completely
 describe the current view and can be used to reproduce a placement screenshot.
+
+### Conveyor product motion
+
+The production stream moves along the conveyor's transformed long axis and
+wraps from the outfeed back to the infeed. `Product gap` is the exact clear
+edge-to-edge interval in millimetres. The controller combines that gap with
+the 46 mm product length, calculates how many products fit on the usable belt,
+and rebuilds the product pool whenever the interval changes.
+
+Use the always-visible `CONVEYOR FLOW` panel to adjust product gap and belt
+speed while the simulation is running. The default 20 mm gap produces 11
+products at 100 mm/s. The information overlay also shows gap, product count,
+throughput per minute, and loop duration.
+
+`Stop at MG400 Y` configures a production station in millimetres; its default
+is `228.0 mm`. Because MG400 uses Z-up coordinates, Cartesian Y maps to negative
+Godot world Z in this project. When any product reaches the station, the whole
+conveyor clamps exactly at that coordinate. Press `Q` to resume; the following
+product will stop at the same station. While stopped, `Q` is reserved for the
+conveyor instead of manual tool yaw.
+
+The reusable controller is `scripts/conveyor_product_motion.gd`. Its exported
+`product_interval_mm`, `product_speed_mps`, `conveyor_length_m`, and product
+dimensions can also be configured on the `ProductFlow` node in `main.tscn`.
 
 ## Cartesian API
 
@@ -67,6 +92,66 @@ to the physical workspace and the method returns `false`.
 
 `urdf_position_to_world(Vector3(x, y, z))` converts ROS/MG400 Z-up coordinates
 to Godot world coordinates. All dimensions are metres.
+
+## LinuxCNC-style Cartesian trajectory planner
+
+`scripts/cartesian_trajectory_planner.gd` accepts a list of Cartesian waypoints
+and generates linear segments with a commanded feed rate, acceleration-limited
+trapezoidal/triangular profiles, and junction-deviation lookahead. Forward and
+backward passes limit each corner so the tool blends through reachable junctions
+instead of stopping at every coordinate, while the first and last waypoints
+remain exact stops.
+
+`Main` exposes `set_cartesian_trajectory_world()` for Godot metres and
+`set_cartesian_trajectory_urdf()` for MG400/ROS millimetres. The default scene
+uses a closed five-point loop at 120 mm/s with 500 mm/s² acceleration. Press
+Space to pause/resume the planned path alongside the existing manual mode.
+
+The planner reports sampled position, yaw, feed speed, elapsed/total time,
+segment count, and completion state. Replace the default list with your own
+coordinates from another script, for example:
+
+```gdscript
+var points := [
+    Vector3(240.0, 0.0, 245.0),
+    Vector3(335.0, 0.0, 245.0),
+    Vector3(335.0, 80.0, 245.0),
+]
+$Main.set_cartesian_trajectory_urdf(points, 150.0, 600.0, 1.0)
+```
+
+### Editing trajectories in Emacs
+
+`tools/emacs/mg400-traj-mode.el` provides a major mode for the dedicated
+`.traj` files. It follows the conventions of the supplied `godot-pose-mode`:
+the document stays plain text and Git-friendly, while validation and preview
+are available as buffer commands. Add the mode to your Emacs load path:
+
+```elisp
+(add-to-list 'load-path "/Users/hotcat/zhouyu/MG400/tools/emacs")
+(require 'mg400-traj-mode)
+```
+
+Opening `trajectories/label_application.traj` automatically selects
+`mg400-traj-mode`. The file has two sections: `[trajectory]` contains
+`feed_mm_s`, `acceleration_mm_s2`, `junction_deviation_mm`, and `loop`; each
+row in `[waypoints]` is `X_mm Y_mm Z_mm yaw_deg` (yaw is optional). Values use
+MG400/ROS millimetres and degrees, matching `set_cartesian_trajectory_urdf()`.
+
+The mode's commands are:
+
+- `C-c C-v` (`mg400-traj-validate`) checks the document and reports its motion
+  parameters.
+- `C-c C-i` (`mg400-traj-insert-waypoint`) prompts for X/Y/Z/yaw and appends a
+  waypoint to the section.
+- `C-c C-r` (`mg400-traj-run`) saves, validates, and launches Godot with the
+  current file: `-- --trajectory=/absolute/path/file.traj`.
+- `C-c C-s` saves the buffer.
+
+Customize `mg400-traj-godot-executable` when Godot is not on its default path,
+or set `mg400-traj-default-project-root` when the trajectory file lives
+outside this project. `#` starts a comment, and aliases such as
+`velocity_mm_s` and `accel_mm_s2` are accepted for convenient editing.
 
 ## Model and IK notes
 

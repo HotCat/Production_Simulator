@@ -7,7 +7,8 @@
 [ext_resource type="PackedScene" uid="uid://c75q1hnc2ycob" path="res://assets/label_stripper/label_stripper.glb" id="5_label_stripper"]
 [ext_resource type="PackedScene" uid="uid://cihc3gk04eu0h" path="res://assets/product/product.glb" id="6_product"]
 [ext_resource type="PackedScene" uid="uid://boqu1blidpty" path="res://assets/hikrobot_gs200/hikrobot_gs200.glb" id="7_hikrobot_gs200"]
-[ext_resource type="PackedScene" path="res://assets/hikrobot_gs200_bracket/hikrobot_gs200_bracket.glb" id="8_hikrobot_gs200_bracket"]
+[ext_resource type="PackedScene" uid="uid://bxwriu0kq67r3" path="res://assets/hikrobot_gs200_bracket/hikrobot_gs200_bracket.glb" id="8_hikrobot_gs200_bracket"]
+[ext_resource type="Script" uid="uid://bfmtpeb0wq0vg" path="res://scripts/conveyor_product_motion.gd" id="9_product_motion"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
 sky_top_color = Color(0.055, 0.075, 0.11, 1)
@@ -55,16 +56,16 @@ corner_radius_top_right = 8
 corner_radius_bottom_right = 8
 corner_radius_bottom_left = 8
 
+[sub_resource type="LabelSettings" id="SmallSettings"]
+font_size = 14
+font_color = Color(0.63, 0.69, 0.76, 1)
+
 [sub_resource type="LabelSettings" id="TitleSettings"]
 font_size = 24
 font_color = Color(0.4, 0.82, 1, 1)
 
 [sub_resource type="LabelSettings" id="TextSettings"]
 font_color = Color(0.88, 0.92, 0.96, 1)
-
-[sub_resource type="LabelSettings" id="SmallSettings"]
-font_size = 14
-font_color = Color(0.63, 0.69, 0.76, 1)
 
 [node name="Main" type="Node3D" unique_id=488800296]
 script = ExtResource("1_main")
@@ -79,7 +80,7 @@ light_energy = 1.35
 shadow_enabled = true
 
 [node name="FillLight" type="OmniLight3D" parent="." unique_id=893353201]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.25, 0.45, 0.3)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.24688411, 0.45, -0.45873827)
 light_color = Color(0.35, 0.62, 1, 1)
 light_energy = 2.0
 omni_range = 1.4
@@ -95,11 +96,12 @@ script = ExtResource("2_robot")
 [node name="Conveyor" parent="." unique_id=478772091 instance=ExtResource("4_conveyor")]
 transform = Transform3D(-4.371139e-08, 0, 1, 0, 1, 0, -1, 0, -4.371139e-08, 0.27163061, 0.08125973, 0)
 
-[node name="Product" parent="." unique_id=338419744 instance=ExtResource("6_product")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.27163061, 0.15325972, 0)
+[node name="ProductFlow" type="Node3D" parent="." unique_id=338419744]
+script = ExtResource("9_product_motion")
+product_scene = ExtResource("6_product")
 
-[node name="HIKROBOTGS200Bracket" parent="." instance=ExtResource("8_hikrobot_gs200_bracket")]
-position = Vector3(0.44, 0, -0.009776026)
+[node name="HIKROBOTGS200Bracket" parent="." unique_id=1259906496 instance=ExtResource("8_hikrobot_gs200_bracket")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.44, 0, -0.009776026)
 
 [node name="HIKROBOTGS200" parent="." unique_id=2042300776 instance=ExtResource("7_hikrobot_gs200")]
 transform = Transform3D(-0.9995292, 0, 0.03068308, -0.019541625, 0.7709579, -0.6365862, -0.02365536, -0.63688606, -0.77059495, 0.2629, 0.302346, -0.009776026)
@@ -150,11 +152,92 @@ theme_override_constants/shadow_offset_y = 1
 theme_override_font_sizes/font_size = 15
 text = "● IK reachable"
 
+[node name="FlowControls" type="PanelContainer" parent="UI" unique_id=258888414]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -300.0
+offset_top = 68.0
+offset_right = -24.0
+offset_bottom = 260.0
+grow_horizontal = 0
+theme_override_styles/panel = SubResource("PanelStyle")
+
+[node name="VBox" type="VBoxContainer" parent="UI/FlowControls" unique_id=451803231]
+layout_mode = 2
+theme_override_constants/separation = 5
+
+[node name="Title" type="Label" parent="UI/FlowControls/VBox" unique_id=697281901]
+layout_mode = 2
+text = "CONVEYOR FLOW"
+label_settings = SubResource("SmallSettings")
+
+[node name="IntervalRow" type="HBoxContainer" parent="UI/FlowControls/VBox" unique_id=1130133017]
+layout_mode = 2
+
+[node name="IntervalLabel" type="Label" parent="UI/FlowControls/VBox/IntervalRow" unique_id=1193922705]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Product gap"
+label_settings = SubResource("SmallSettings")
+
+[node name="IntervalSpin" type="SpinBox" parent="UI/FlowControls/VBox/IntervalRow" unique_id=1955903906]
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+max_value = 500.0
+step = 5.0
+value = 20.0
+suffix = " mm"
+
+[node name="SpeedRow" type="HBoxContainer" parent="UI/FlowControls/VBox" unique_id=614442860]
+layout_mode = 2
+
+[node name="SpeedLabel" type="Label" parent="UI/FlowControls/VBox/SpeedRow" unique_id=466057562]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Belt speed"
+label_settings = SubResource("SmallSettings")
+
+[node name="SpeedSpin" type="SpinBox" parent="UI/FlowControls/VBox/SpeedRow" unique_id=433269271]
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+max_value = 1000.0
+step = 5.0
+value = 100.0
+suffix = " mm/s"
+
+[node name="StopRow" type="HBoxContainer" parent="UI/FlowControls/VBox" unique_id=738251340]
+layout_mode = 2
+
+[node name="StopLabel" type="Label" parent="UI/FlowControls/VBox/StopRow" unique_id=181527250]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Stop at MG400 Y"
+label_settings = SubResource("SmallSettings")
+
+[node name="StopYSpin" type="SpinBox" parent="UI/FlowControls/VBox/StopRow" unique_id=1836554370]
+custom_minimum_size = Vector2(120, 0)
+layout_mode = 2
+min_value = -350.0
+max_value = 350.0
+value = 228.0
+suffix = " mm"
+
+[node name="ProductCount" type="Label" parent="UI/FlowControls/VBox" unique_id=1481862751]
+layout_mode = 2
+text = "Products on conveyor: 11"
+label_settings = SubResource("SmallSettings")
+
+[node name="FlowState" type="Label" parent="UI/FlowControls/VBox" unique_id=297969328]
+layout_mode = 2
+text = "RUNNING  ·  Stop at Y 228.0 mm"
+label_settings = SubResource("SmallSettings")
+
 [node name="Margin" type="PanelContainer" parent="UI" unique_id=1988247544]
 offset_left = 24.0
 offset_top = 24.0
 offset_right = 790.0
-offset_bottom = 260.0
+offset_bottom = 300.0
 theme_override_styles/panel = SubResource("PanelStyle")
 
 [node name="VBox" type="VBoxContainer" parent="UI/Margin" unique_id=1132998265]
@@ -181,6 +264,16 @@ layout_mode = 2
 text = "IK"
 label_settings = SubResource("TextSettings")
 
+[node name="Trajectory" type="Label" parent="UI/Margin/VBox"]
+layout_mode = 2
+text = "TRAJECTORY"
+label_settings = SubResource("SmallSettings")
+
+[node name="ConveyorStatus" type="Label" parent="UI/Margin/VBox" unique_id=1082038643]
+layout_mode = 2
+text = "CONVEYOR"
+label_settings = SubResource("SmallSettings")
+
 [node name="CameraPose" type="Label" parent="UI/Margin/VBox" unique_id=961713353]
 layout_mode = 2
 text = "CAMERA"
@@ -194,5 +287,5 @@ label_settings = SubResource("SmallSettings")
 [node name="Help" type="Label" parent="UI/Margin/VBox" unique_id=453564073]
 layout_mode = 2
 text = "Trackpad: two-finger orbit  ·  Ctrl + two-finger zoom  ·  Shift + two-finger pan
-SPACE auto/manual  ·  Arrows X/Y  ·  R/F Z  ·  Q/E yaw  ·  0/Delete target reset  ·  C camera reset"
+SPACE auto/manual  ·  Arrows X/Y  ·  R/F Z  ·  Q resume/yaw  ·  E yaw  ·  0/Delete target reset  ·  C camera reset"
 label_settings = SubResource("SmallSettings")
