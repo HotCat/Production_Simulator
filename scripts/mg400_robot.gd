@@ -13,6 +13,9 @@ const J3_ORIGIN := Vector3(-0.0010512570, 0.0357748756, 0.1750011643)
 const J4_1_ORIGIN := Vector3(0.1749697841, -0.0170000000, 0.0032518714)
 const J4_ORIGIN := Vector3(0.0659996239, 0.0170000000, 0.0310008007)
 const TOOL_OFFSET := Vector3(0.0, 0.0, -0.085)
+const SMT_NOZZLE_SCENE = preload("res://assets/smt_nozzle/smt_nozzle.glb")
+const PRODUCT_LABEL_SCENE = preload("res://assets/product_label/product_label.glb")
+const NOZZLE_TIP_OFFSET := 0.0261
 
 const J2_2_ORIGIN := Vector3(0.0045288568, -0.0305000000, 0.1415000000)
 const J3_2_ORIGIN := Vector3(-0.0010504975, 0.0065000000, 0.1749968470)
@@ -38,6 +41,7 @@ const ARM_B_XZ := Vector2(J4_1_ORIGIN.x, J4_1_ORIGIN.z)
 var _urdf_root: Node3D
 var _joints := {}
 var _tcp: Marker3D
+var _product_label: Node3D
 var _joint_angles := Vector4.ZERO
 var _target_angles := Vector4.ZERO
 var _last_reachable := true
@@ -111,6 +115,16 @@ func apply_joint_angles(angles: Vector4) -> void:
 
 func get_tcp_world_position() -> Vector3:
 	return _tcp.global_position
+
+
+## Shows or hides the label currently held by the SMT nozzle.
+func set_product_label_visible(show_label: bool) -> void:
+	if _product_label != null:
+		_product_label.visible = show_label
+
+
+func is_product_label_visible() -> bool:
+	return _product_label != null and _product_label.visible
 
 
 func get_joint_angles() -> Vector4:
@@ -300,6 +314,33 @@ func _add_tcp_visual(parent: Node3D) -> void:
 	instance.mesh = sphere
 	instance.material_override = material
 	parent.add_child(instance)
+	var nozzle := SMT_NOZZLE_SCENE.instantiate() as Node3D
+	if nozzle == null:
+		push_warning("SMT nozzle asset could not be instantiated")
+		return
+	nozzle.name = "SMTNozzle"
+	nozzle.set_meta("overall_dimensions_mm", "12 diameter x 25.5 length")
+	nozzle.set_meta("interface", "MG400 TCP; pickup axis world -Y")
+	# Blender's Z-up -> Godot Y-up conversion leaves the imported nozzle's
+	# length along the TCP-local -Y axis.  The MG400 URDF frame itself is
+	# rotated -90 degrees about X, which would otherwise turn that axis toward
+	# world +Z (sideways).  Rotate the asset +90 degrees about its local X so
+	# its suction cup points down along world -Y toward the conveyor.
+	nozzle.rotation.x = PI * 0.5
+	parent.add_child(nozzle)
+	var label := PRODUCT_LABEL_SCENE.instantiate() as Node3D
+	if label == null:
+		push_warning("Product label asset could not be instantiated")
+		return
+	label.name = "ProductLabel"
+	label.position = Vector3(0.0, -NOZZLE_TIP_OFFSET, 0.0)
+	# The label is parented under the already-corrected nozzle frame, so its
+	# imported XZ face remains horizontal and its thickness follows -Y.
+	label.set_meta("dimensions_mm", "27.0 x 9.4 x 0.16")
+	label.set_meta("product_panel_mm", "27.8 x 10.2")
+	label.set_meta("interface", "SMT nozzle suction face; aligned to product panel")
+	nozzle.add_child(label)
+	_product_label = label
 
 
 func _add_upper_arm_logo(parent: Node3D) -> void:

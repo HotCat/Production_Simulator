@@ -1,0 +1,298 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/fairino3_demo.gd" id="1_demo"]
+[ext_resource type="Script" path="res://scripts/fairino3_robot.gd" id="2_robot"]
+[ext_resource type="Script" path="res://scripts/editor_orbit_camera.gd" id="3_camera"]
+[ext_resource type="Script" path="res://scripts/tcp_gizmo.gd" id="4_gizmo"]
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
+sky_top_color = Color(0.045, 0.07, 0.12, 1)
+sky_horizon_color = Color(0.32, 0.38, 0.48, 1)
+ground_bottom_color = Color(0.025, 0.035, 0.05, 1)
+ground_horizon_color = Color(0.22, 0.27, 0.34, 1)
+
+[sub_resource type="Sky" id="Sky"]
+sky_material = SubResource("SkyMaterial")
+
+[sub_resource type="Environment" id="Environment"]
+background_mode = 2
+sky = SubResource("Sky")
+ambient_light_source = 3
+ambient_light_color = Color(0.75, 0.82, 0.92, 1)
+ambient_light_energy = 0.65
+tonemap_mode = 2
+
+[sub_resource type="StandardMaterial3D" id="FloorMaterial"]
+albedo_color = Color(0.12, 0.15, 0.19, 1)
+metallic = 0.25
+roughness = 0.52
+
+[sub_resource type="BoxMesh" id="FloorMesh"]
+size = Vector3(1.3, 0.02, 1.2)
+
+[sub_resource type="StandardMaterial3D" id="TargetMaterial"]
+shading_mode = 0
+albedo_color = Color(0.95, 0.18, 0.08, 1)
+emission_enabled = true
+emission = Color(0.9, 0.06, 0.015, 1)
+emission_energy_multiplier = 1.4
+
+[sub_resource type="SphereMesh" id="TargetMesh"]
+radius = 0.012
+height = 0.024
+
+[sub_resource type="StyleBoxFlat" id="PanelStyle"]
+bg_color = Color(0.025, 0.035, 0.055, 0.9)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.16, 0.52, 0.78, 0.85)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[node name="Fairino3Demo" type="Node3D"]
+script = ExtResource("1_demo")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment")
+
+[node name="KeyLight" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-35, -28, 0)
+light_color = Color(0.92, 0.96, 1, 1)
+light_energy = 1.45
+shadow_enabled = true
+
+[node name="FillLight" type="OmniLight3D" parent="."]
+position = Vector3(0.25, 0.45, 0.22)
+light_color = Color(0.35, 0.62, 1, 1)
+light_energy = 2.2
+omni_range = 1.4
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.012, 0)
+material_override = SubResource("FloorMaterial")
+mesh = SubResource("FloorMesh")
+
+[node name="Fairino3Robot" type="Node3D" parent="."]
+script = ExtResource("2_robot")
+
+[node name="TargetMarker" type="MeshInstance3D" parent="."]
+material_override = SubResource("TargetMaterial")
+mesh = SubResource("TargetMesh")
+
+[node name="TcpGizmo" type="Node3D" parent="."]
+script = ExtResource("4_gizmo")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+current = true
+fov = 43.0
+script = ExtResource("3_camera")
+initial_focus = Vector3(0.02, 0.22, 0)
+initial_yaw_degrees = 32.0
+initial_pitch_degrees = 18.0
+initial_distance = 0.85
+minimum_distance = 0.16
+maximum_distance = 3.5
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Panel" type="PanelContainer" parent="UI"]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 420.0
+offset_bottom = 158.0
+theme_override_styles/panel = SubResource("PanelStyle")
+
+[node name="Margin" type="MarginContainer" parent="UI/Panel"]
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 10
+
+[node name="VBox" type="VBoxContainer" parent="UI/Panel/Margin"]
+
+[node name="Status" type="Label" parent="UI/Panel/Margin/VBox"]
+text = "FAIRINO3 V6  ·  6-AXIS CARTESIAN IK"
+theme_override_colors/font_color = Color(0.4, 0.84, 1, 1)
+theme_override_font_sizes/font_size = 16
+
+[node name="Pose" type="Label" parent="UI/Panel/Margin/VBox"]
+text = "TCP"
+theme_override_colors/font_color = Color(0.86, 0.91, 0.96, 1)
+
+[node name="AxisPanel" type="PanelContainer" parent="UI"]
+offset_left = 20.0
+offset_top = 174.0
+offset_right = 300.0
+offset_bottom = 454.0
+theme_override_styles/panel = SubResource("PanelStyle")
+
+[node name="Margin" type="MarginContainer" parent="UI/AxisPanel"]
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 9
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 9
+
+[node name="VBox" type="VBoxContainer" parent="UI/AxisPanel/Margin"]
+
+[node name="Title" type="Label" parent="UI/AxisPanel/Margin/VBox"]
+text = "JOINT AXIS MANUAL OVERRIDE (DEG)"
+theme_override_colors/font_color = Color(0.4, 0.84, 1, 1)
+theme_override_font_sizes/font_size = 14
+
+[node name="Axis1Row" type="HBoxContainer" parent="UI/AxisPanel/Margin/VBox"]
+
+[node name="Label" type="Label" parent="UI/AxisPanel/Margin/VBox/Axis1Row"]
+custom_minimum_size = Vector2(38, 0)
+text = "J1"
+
+[node name="SpinBox" type="SpinBox" parent="UI/AxisPanel/Margin/VBox/Axis1Row"]
+size_flags_horizontal = 3
+min_value = -175.0
+max_value = 175.0
+step = 0.1
+suffix = "°"
+
+[node name="Axis2Row" type="HBoxContainer" parent="UI/AxisPanel/Margin/VBox"]
+
+[node name="Label" type="Label" parent="UI/AxisPanel/Margin/VBox/Axis2Row"]
+custom_minimum_size = Vector2(38, 0)
+text = "J2"
+
+[node name="SpinBox" type="SpinBox" parent="UI/AxisPanel/Margin/VBox/Axis2Row"]
+size_flags_horizontal = 3
+min_value = -265.0
+max_value = 85.0
+step = 0.1
+suffix = "°"
+
+[node name="Axis3Row" type="HBoxContainer" parent="UI/AxisPanel/Margin/VBox"]
+
+[node name="Label" type="Label" parent="UI/AxisPanel/Margin/VBox/Axis3Row"]
+custom_minimum_size = Vector2(38, 0)
+text = "J3"
+
+[node name="SpinBox" type="SpinBox" parent="UI/AxisPanel/Margin/VBox/Axis3Row"]
+size_flags_horizontal = 3
+min_value = -162.0
+max_value = 162.0
+step = 0.1
+suffix = "°"
+
+[node name="Axis4Row" type="HBoxContainer" parent="UI/AxisPanel/Margin/VBox"]
+
+[node name="Label" type="Label" parent="UI/AxisPanel/Margin/VBox/Axis4Row"]
+custom_minimum_size = Vector2(38, 0)
+text = "J4"
+
+[node name="SpinBox" type="SpinBox" parent="UI/AxisPanel/Margin/VBox/Axis4Row"]
+size_flags_horizontal = 3
+min_value = -265.0
+max_value = 85.0
+step = 0.1
+suffix = "°"
+
+[node name="Axis5Row" type="HBoxContainer" parent="UI/AxisPanel/Margin/VBox"]
+
+[node name="Label" type="Label" parent="UI/AxisPanel/Margin/VBox/Axis5Row"]
+custom_minimum_size = Vector2(38, 0)
+text = "J5"
+
+[node name="SpinBox" type="SpinBox" parent="UI/AxisPanel/Margin/VBox/Axis5Row"]
+size_flags_horizontal = 3
+min_value = -175.0
+max_value = 175.0
+step = 0.1
+suffix = "°"
+
+[node name="Axis6Row" type="HBoxContainer" parent="UI/AxisPanel/Margin/VBox"]
+
+[node name="Label" type="Label" parent="UI/AxisPanel/Margin/VBox/Axis6Row"]
+custom_minimum_size = Vector2(38, 0)
+text = "J6"
+
+[node name="SpinBox" type="SpinBox" parent="UI/AxisPanel/Margin/VBox/Axis6Row"]
+size_flags_horizontal = 3
+min_value = -175.0
+max_value = 175.0
+step = 0.1
+suffix = "°"
+
+[node name="OrientationPanel" type="PanelContainer" parent="UI"]
+offset_left = 315.0
+offset_top = 174.0
+offset_right = 605.0
+offset_bottom = 398.0
+theme_override_styles/panel = SubResource("PanelStyle")
+
+[node name="Margin" type="MarginContainer" parent="UI/OrientationPanel"]
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 9
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 9
+
+[node name="VBox" type="VBoxContainer" parent="UI/OrientationPanel/Margin"]
+
+[node name="Title" type="Label" parent="UI/OrientationPanel/Margin/VBox"]
+text = "TCP WORLD ORIENTATION (DEG)"
+theme_override_colors/font_color = Color(0.4, 0.84, 1, 1)
+theme_override_font_sizes/font_size = 14
+
+[node name="LockOrientation" type="CheckBox" parent="UI/OrientationPanel/Margin/VBox"]
+text = "Constrain world orientation"
+
+[node name="PoseReachability" type="Label" parent="UI/OrientationPanel/Margin/VBox"]
+text = "● POSE REACHABLE"
+theme_override_colors/font_color = Color(0.44, 0.9, 0.54, 1)
+
+[node name="Orientation0Row" type="HBoxContainer" parent="UI/OrientationPanel/Margin/VBox"]
+
+[node name="Label" type="Label" parent="UI/OrientationPanel/Margin/VBox/Orientation0Row"]
+custom_minimum_size = Vector2(48, 0)
+text = "Roll"
+
+[node name="SpinBox" type="SpinBox" parent="UI/OrientationPanel/Margin/VBox/Orientation0Row"]
+size_flags_horizontal = 3
+min_value = -180.0
+max_value = 180.0
+step = 0.1
+suffix = "°"
+
+[node name="Orientation1Row" type="HBoxContainer" parent="UI/OrientationPanel/Margin/VBox"]
+
+[node name="Label" type="Label" parent="UI/OrientationPanel/Margin/VBox/Orientation1Row"]
+custom_minimum_size = Vector2(48, 0)
+text = "Pitch"
+
+[node name="SpinBox" type="SpinBox" parent="UI/OrientationPanel/Margin/VBox/Orientation1Row"]
+size_flags_horizontal = 3
+min_value = -180.0
+max_value = 180.0
+step = 0.1
+suffix = "°"
+
+[node name="Orientation2Row" type="HBoxContainer" parent="UI/OrientationPanel/Margin/VBox"]
+
+[node name="Label" type="Label" parent="UI/OrientationPanel/Margin/VBox/Orientation2Row"]
+custom_minimum_size = Vector2(48, 0)
+text = "Yaw"
+
+[node name="SpinBox" type="SpinBox" parent="UI/OrientationPanel/Margin/VBox/Orientation2Row"]
+size_flags_horizontal = 3
+min_value = -180.0
+max_value = 180.0
+step = 0.1
+suffix = "°"
+
+[node name="Buttons" type="HBoxContainer" parent="UI/OrientationPanel/Margin/VBox"]
+
+[node name="AlignWorld" type="Button" parent="UI/OrientationPanel/Margin/VBox/Buttons"]
+size_flags_horizontal = 3
+text = "Align Flange to Base"
+
+[node name="CaptureCurrent" type="Button" parent="UI/OrientationPanel/Margin/VBox/Buttons"]
+size_flags_horizontal = 3
+text = "Capture Current"

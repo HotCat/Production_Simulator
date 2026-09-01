@@ -67,11 +67,35 @@ func _initialize() -> void:
 	var exact_yaw := absf(angle_difference(planner.get_current_yaw(), yaws[-1])) <= 0.00001
 	var completed := planner.is_completed() and planner.get_current_speed_mm_s() == 0.0
 
+	var event_planner := PlannerScript.new()
+	var event_coordinates: Array[Vector3] = [Vector3.ZERO, Vector3(0.1, 0.0, 0.0)]
+	var event_waypoints: Array = [
+		[{"type": "delay", "seconds": 0.5}],
+		[
+			{"type": "trigger", "key": "q"},
+			{"type": "trigger", "key": "w"},
+			{"type": "trigger", "key": "e"},
+		],
+	]
+	var triggered_keys: Array[String] = []
+	event_planner.trajectory_triggered.connect(func(key: String) -> void: triggered_keys.append(key))
+	var events_planned: bool = event_planner.plan_world_path(event_coordinates, 100.0, 500.0, 1.0, PackedFloat32Array(), event_waypoints)
+	event_planner.start()
+	var hold_pose := event_planner.advance(0.25)
+	var delay_hold_ok: bool = hold_pose.position == event_coordinates[0] and hold_pose.speed_mps == 0.0
+	while event_planner.is_running():
+		event_planner.advance(0.01)
+	var events_ok: bool = (
+		event_planner.get_total_seconds() >= 0.5
+		and triggered_keys == ["q", "w", "e"]
+		and event_planner.get_current_position() == event_coordinates[-1]
+	)
+
 	print("Trajectory segments: ", planner.get_segment_count())
 	print("Corner speeds (mm/s): ", corner_one_speed, ", ", corner_two_speed)
 	print("Trajectory duration (s): ", planner.get_total_seconds())
 	print("Final position: ", planner.get_current_position())
-	if not corners_blended or not endpoints_stop or not path_ok or not speed_ok or not exact_endpoint or not exact_yaw or not completed:
+	if not corners_blended or not endpoints_stop or not path_ok or not speed_ok or not exact_endpoint or not exact_yaw or not completed or not events_planned or not delay_hold_ok or not events_ok:
 		push_error("Cartesian lookahead trajectory verification failed")
 		quit(1)
 	else:

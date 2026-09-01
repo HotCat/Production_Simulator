@@ -17,12 +17,16 @@ const TrajectoryFileParserScript = preload("res://scripts/trajectory_file_parser
 @onready var camera_orbit_label: Label = $UI/Margin/VBox/CameraOrbit
 @onready var overlay_panel: PanelContainer = $UI/Margin
 @onready var overlay_toggle: CheckBox = $UI/OverlayToggle
+@onready var conveyor_overlay_panel: PanelContainer = $UI/FlowControls
+@onready var conveyor_overlay_toggle: CheckBox = $UI/ConveyorInfoToggle
+@onready var recording_indicator: Label = $UI/RecordingIndicator
 @onready var ik_indicator: Label = $UI/IKIndicator
 @onready var interval_spin: SpinBox = $UI/FlowControls/VBox/IntervalRow/IntervalSpin
 @onready var speed_spin: SpinBox = $UI/FlowControls/VBox/SpeedRow/SpeedSpin
 @onready var stop_y_spin: SpinBox = $UI/FlowControls/VBox/StopRow/StopYSpin
 @onready var product_count_label: Label = $UI/FlowControls/VBox/ProductCount
 @onready var flow_state_label: Label = $UI/FlowControls/VBox/FlowState
+@onready var production_stats_label: Label = $UI/FlowControls/VBox/ProductionStats
 
 var automatic := true
 var elapsed := 0.0
@@ -32,6 +36,12 @@ var reachable := true
 var suppress_q_yaw_until_release := false
 var trajectory := CartesianTrajectoryPlannerScript.new()
 var loop_trajectory := true
+var production_clock_seconds := 0.0
+var q_event_count := 0
+var q_last_event_seconds := -1.0
+var q_event_interval_seconds := -1.0
+var q_event_rate_per_minute := 0.0
+var runtime_recorder: Node
 
 
 ## Replace the active trajectory with Godot world-space waypoints in metres.
@@ -41,9 +51,17 @@ func set_cartesian_trajectory_world(
 	speed_mm_s: float = 120.0,
 	acceleration_mm_s2: float = 500.0,
 	junction_deviation_mm: float = 1.0,
-	yaw_radians: PackedFloat32Array = PackedFloat32Array()
+	yaw_radians: PackedFloat32Array = PackedFloat32Array(),
+	waypoint_events: Array = []
 ) -> bool:
-	var planned := trajectory.plan_world_path(coordinates, speed_mm_s, acceleration_mm_s2, junction_deviation_mm, yaw_radians)
+	var planned := trajectory.plan_world_path(
+		coordinates,
+		speed_mm_s,
+		acceleration_mm_s2,
+		junction_deviation_mm,
+		yaw_radians,
+		waypoint_events
+	)
 	if planned:
 		trajectory.start()
 		automatic = true
@@ -57,12 +75,20 @@ func set_cartesian_trajectory_urdf(
 	speed_mm_s: float = 120.0,
 	acceleration_mm_s2: float = 500.0,
 	junction_deviation_mm: float = 1.0,
-	yaw_radians: PackedFloat32Array = PackedFloat32Array()
+	yaw_radians: PackedFloat32Array = PackedFloat32Array(),
+	waypoint_events: Array = []
 ) -> bool:
 	var world_coordinates: Array[Vector3] = []
 	for coordinate in coordinates_mm:
 		world_coordinates.append(robot.urdf_position_to_world(coordinate / 1000.0))
-	return set_cartesian_trajectory_world(world_coordinates, speed_mm_s, acceleration_mm_s2, junction_deviation_mm, yaw_radians)
+	return set_cartesian_trajectory_world(
+		world_coordinates,
+		speed_mm_s,
+		acceleration_mm_s2,
+		junction_deviation_mm,
+		yaw_radians,
+		waypoint_events
+	)
 
 
 func _ready() -> void:
@@ -80,9 +106,17 @@ func _ready() -> void:
 		default_world_path.append(robot.urdf_position_to_world(coordinate))
 	trajectory.plan_world_path(default_world_path, 120.0, 500.0, 1.0)
 	trajectory.start()
+	trajectory.trajectory_triggered.connect(_on_trajectory_triggered)
 	_load_command_line_trajectory()
 	robot.target_reachability_changed.connect(_on_reachability_changed)
 	overlay_toggle.toggled.connect(_on_overlay_toggled)
+	conveyor_overlay_toggle.toggled.connect(_on_conveyor_overlay_toggled)
+	runtime_recorder = get_node_or_null("/root/RuntimeRecorder")
+	if runtime_recorder != null:
+		runtime_recorder.recording_started.connect(_on_recording_started)
+		runtime_recorder.recording_finalizing.connect(_on_recording_finalizing)
+		runtime_recorder.recording_stopped.connect(_on_recording_stopped)
+		runtime_recorder.recording_failed.connect(_on_recording_failed)
 	interval_spin.value = product_flow.product_interval_mm
 	speed_spin.value = product_flow.product_speed_mps * 1000.0
 	stop_y_spin.value = product_flow.stop_position_y_mm
@@ -91,7 +125,9 @@ func _ready() -> void:
 	stop_y_spin.value_changed.connect(_on_stop_y_changed)
 	product_flow.configuration_changed.connect(_update_flow_controls)
 	_on_overlay_toggled(overlay_toggle.button_pressed)
+	_on_conveyor_overlay_toggled(conveyor_overlay_toggle.button_pressed)
 	_update_ik_indicator()
+	_set_recording_indicator("● REC OFF  ·  F9 to start", Color("9aa8b8"))
 	_update_flow_controls()
 	_update_ui()
 
@@ -99,6 +135,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_ESCAPE):
 		get_tree().quit()
+	production_clock_seconds += maxf(delta, 0.0)
 
 	if automatic:
 		var pose := trajectory.advance(delta)
@@ -136,12 +173,15 @@ func _load_command_line_trajectory() -> void:
 	var yaw_radians := PackedFloat32Array()
 	for yaw in yaw_degrees:
 		yaw_radians.append(deg_to_rad(yaw))
+	var waypoint_events: Array = parsed.get("waypoint_events", [])
+	_reset_production_statistics()
 	var planned := set_cartesian_trajectory_urdf(
 		coordinates,
 		parsed["feed_mm_s"],
 		parsed["acceleration_mm_s2"],
 		parsed["junction_deviation_mm"],
-		yaw_radians
+		yaw_radians,
+		waypoint_events
 	)
 	if planned:
 		loop_trajectory = parsed["loop"]
@@ -149,7 +189,21 @@ func _load_command_line_trajectory() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not event is InputEventKey or event.keycode != KEY_Q:
+	if not event is InputEventKey:
+		return
+	if event.echo:
+		return
+	if event.keycode == KEY_W:
+		if event.pressed:
+			robot.set_product_label_visible(true)
+			get_viewport().set_input_as_handled()
+		return
+	if event.keycode == KEY_E:
+		if event.pressed:
+			robot.set_product_label_visible(false)
+			get_viewport().set_input_as_handled()
+		return
+	if event.keycode != KEY_Q:
 		return
 	if not event.pressed:
 		suppress_q_yaw_until_release = false
@@ -159,6 +213,48 @@ func _input(event: InputEvent) -> void:
 	product_flow.resume_after_stop()
 	suppress_q_yaw_until_release = true
 	get_viewport().set_input_as_handled()
+
+
+func _on_trajectory_triggered(key: String) -> void:
+	# Trigger rows use the same key names as the interactive controls.  W/E
+	# control the carried label and Q resumes a conveyor stopped at its station.
+	match key.to_lower():
+		"w":
+			robot.set_product_label_visible(true)
+			return
+		"e":
+			robot.set_product_label_visible(false)
+			return
+		"q":
+			pass
+		_:
+			return
+	q_event_count += 1
+	if q_last_event_seconds >= 0.0:
+		q_event_interval_seconds = production_clock_seconds - q_last_event_seconds
+		if q_event_interval_seconds > 0.000001:
+			q_event_rate_per_minute = 60.0 / q_event_interval_seconds
+	q_last_event_seconds = production_clock_seconds
+	if product_flow.is_stopped_at_trigger():
+		product_flow.resume_after_stop()
+	_update_production_stats()
+
+
+func _reset_production_statistics() -> void:
+	production_clock_seconds = 0.0
+	q_event_count = 0
+	q_last_event_seconds = -1.0
+	q_event_interval_seconds = -1.0
+	q_event_rate_per_minute = 0.0
+	_update_production_stats()
+
+
+func _update_production_stats() -> void:
+	if production_stats_label == null:
+		return
+	var pace_text := "--" if q_event_rate_per_minute <= 0.0 else "%.1f" % q_event_rate_per_minute
+	var interval_text := "--" if q_event_interval_seconds < 0.0 else "%.2f s" % q_event_interval_seconds
+	production_stats_label.text = "Q PACE  %s/min  ·  Δ %s  ·  N %d" % [pace_text, interval_text, q_event_count]
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -221,6 +317,46 @@ func _on_overlay_toggled(show_overlay: bool) -> void:
 	overlay_panel.visible = show_overlay
 
 
+func _on_conveyor_overlay_toggled(show_overlay: bool) -> void:
+	conveyor_overlay_panel.visible = show_overlay
+
+
+func _set_recording_indicator(text: String, color: Color) -> void:
+	if recording_indicator == null:
+		return
+	recording_indicator.text = text
+	recording_indicator.modulate = color
+
+
+func _on_recording_started(output_path: String) -> void:
+	_set_recording_indicator(
+		"● RECORDING  ·  F9 to stop\n%s" % output_path.get_file(),
+		Color("ff5f5f")
+	)
+
+
+func _on_recording_finalizing(output_path: String) -> void:
+	_set_recording_indicator(
+		"◐ FINALIZING VIDEO\n%s" % output_path.get_file(),
+		Color("ffc266")
+	)
+
+
+func _on_recording_stopped(output_path: String) -> void:
+	_set_recording_indicator(
+		"✓ VIDEO SAVED\nrecordings/%s" % output_path.get_file(),
+		Color("70e58a")
+	)
+	get_tree().create_timer(4.0).timeout.connect(func() -> void:
+		if runtime_recorder == null or (not runtime_recorder.is_recording and not runtime_recorder.is_finalizing):
+			_set_recording_indicator("● REC OFF  ·  F9 to start", Color("9aa8b8"))
+	)
+
+
+func _on_recording_failed(message: String) -> void:
+	_set_recording_indicator("✕ RECORDING ERROR\n%s" % message, Color("ff796d"))
+
+
 func _on_interval_changed(value: float) -> void:
 	product_flow.set_product_interval_mm(value)
 
@@ -241,6 +377,7 @@ func _update_flow_controls() -> void:
 	else:
 		flow_state_label.text = "RUNNING  ·  Stop at Y %.1f mm" % product_flow.stop_position_y_mm
 		flow_state_label.modulate = Color("70e58a")
+	_update_production_stats()
 
 
 func _update_trajectory_ui() -> void:

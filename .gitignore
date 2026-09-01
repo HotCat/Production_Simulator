@@ -19,8 +19,13 @@ myplans.txt
 # Incidental development captures that are not simulator source assets.
 /截屏*.png
 /截屏*.png.import
+/Codex*.png
+/Codex*.png.import
 *.mov
 *.mp4
+
+# Local Godot export output; release binaries are deployment artifacts.
+/build/
 
 # The upstream ROS checkout is vendored as source; its repository metadata and
 # Godot-generated import sidecars do not belong in the parent repository.

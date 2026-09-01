@@ -21,6 +21,8 @@
 ;;   # X_mm  Y_mm  Z_mm  yaw_deg
 ;;   240 0 245 0
 ;;   335 0 245 0
+;;   delay 1.5
+;;   trigger q
 ;;
 ;; Coordinates use MG400/ROS millimetres (X, Y, Z, Z-up).  Yaw is optional and
 ;; is written in degrees.  The Godot planner converts these values to its
@@ -76,6 +78,7 @@ When nil, `mg400-traj-run' searches upward for project.godot."
      . font-lock-constant-face)
     ("\\_<\\(?:true\\|false\\|yes\\|no\\|mm\\|mg400-mm\\)\\_>"
      . font-lock-builtin-face)
+    ("^[[:space:]]*\\_<\\(?:delay\\|trigger\\)\\_>" . font-lock-keyword-face)
     ("^\\s-*#.*$" . font-lock-comment-face))
   "Font-lock rules for MG400 .traj files.")
 
@@ -119,6 +122,7 @@ Signal `user-error' with the source line on malformed input."
         (junction 1.0)
         (loop t)
         (waypoints nil)
+        (events nil)
         (line-number 0))
     (dolist (raw-line (split-string (buffer-string) "\n"))
       (setq line-number (1+ line-number))
@@ -151,21 +155,42 @@ Signal `user-error' with the source line on malformed input."
                 (mg400-traj--error line-number
                                     (format "unknown parameter %s" key))))))
            ((equal section "waypoints")
-            (let* ((payload (if (string-match
-                                "\\`waypoint[[:space:]]*=[[:space:]]*\\(.*\\)\\'"
-                                line)
-                                (match-string 1 line)
-                              line))
-                   (fields (split-string payload "[[:space:]]+" t)))
-              (unless (memq (length fields) '(3 4))
-                (mg400-traj--error line-number
-                                    "waypoint needs X Y Z and optional yaw degrees"))
-              (let ((values (mapcar (lambda (field)
-                                     (mg400-traj--number field line-number))
-                                   fields)))
-                (push (list (nth 0 values) (nth 1 values) (nth 2 values)
-                            (or (nth 3 values) 0.0))
-                      waypoints))))
+            (let* ((command-fields
+                    (split-string
+                     (replace-regexp-in-string "=" " " line)
+                     "[[:space:]]+" t))
+                   (command (downcase (or (car command-fields) ""))))
+              (cond
+               ((member command '("delay" "trigger"))
+                (unless (and events (= (length command-fields) 2))
+                  (mg400-traj--error line-number
+                                      (format "%s needs one argument after a waypoint" command)))
+                (let ((event (if (equal command "delay")
+                                 (list :type 'delay
+                                       :seconds (mg400-traj--number (nth 1 command-fields) line-number))
+                               (list :type 'trigger :key (downcase (nth 1 command-fields))))))
+                  (when (and (equal command "delay")
+                             (< (plist-get event :seconds) 0.0))
+                    (mg400-traj--error line-number "delay must be zero or positive"))
+                  (setf (car (last events))
+                        (append (car (last events)) (list event)))))
+               (t
+                (let* ((payload (if (string-match
+                                    "\\`waypoint[[:space:]]*=[[:space:]]*\\(.*\\)\\'"
+                                    line)
+                                    (match-string 1 line)
+                                  line))
+                       (fields (split-string payload "[[:space:]]+" t)))
+                  (unless (memq (length fields) '(3 4))
+                    (mg400-traj--error line-number
+                                        "waypoint needs X Y Z and optional yaw degrees"))
+                  (let ((values (mapcar (lambda (field)
+                                         (mg400-traj--number field line-number))
+                                       fields)))
+                    (push (list (nth 0 values) (nth 1 values) (nth 2 values)
+                                (or (nth 3 values) 0.0))
+                          waypoints)
+                    (setq events (append events (list nil)))))))))
            (t
             (mg400-traj--error line-number
                                 "expected a section, parameter, or waypoint"))))))
@@ -182,7 +207,8 @@ Signal `user-error' with the source line on malformed input."
           :acceleration-mm-s2 acceleration
           :junction-deviation-mm junction
           :loop loop
-          :waypoints waypoints)))
+          :waypoints waypoints
+          :events events)))
 
 (defun mg400-traj-validate ()
   "Validate the current .traj buffer and report its motion parameters."

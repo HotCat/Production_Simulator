@@ -24,6 +24,7 @@ static func parse_text(text: String, source_name: String = "trajectory") -> Dict
 	var loop := true
 	var coordinates_mm: Array[Vector3] = []
 	var yaw_degrees: PackedFloat32Array = PackedFloat32Array()
+	var waypoint_events: Array[Array] = []
 	var line_number := 0
 
 	for raw_line in text.split("\n"):
@@ -73,6 +74,24 @@ static func parse_text(text: String, source_name: String = "trajectory") -> Dict
 			continue
 
 		if section == "waypoints":
+			var command_fields := line.replace("=", " ").split(" ", false)
+			var command_values: Array[String] = []
+			for field in command_fields:
+				if not field.is_empty():
+					command_values.append(field)
+			if command_values.size() > 0 and command_values[0].to_lower() == "delay":
+				if waypoint_events.is_empty() or command_values.size() != 2:
+					return _error("%s:%d: delay needs seconds after a waypoint" % [source_name, line_number])
+				var delay_seconds := _parse_float(command_values[1])
+				if is_nan(delay_seconds) or delay_seconds < 0.0:
+					return _error("%s:%d: delay must be zero or a positive number" % [source_name, line_number])
+				waypoint_events[-1].append({"type": "delay", "seconds": delay_seconds})
+				continue
+			if command_values.size() > 0 and command_values[0].to_lower() == "trigger":
+				if waypoint_events.is_empty() or command_values.size() != 2 or command_values[1].is_empty():
+					return _error("%s:%d: trigger needs a key after a waypoint" % [source_name, line_number])
+				waypoint_events[-1].append({"type": "trigger", "key": command_values[1].to_lower()})
+				continue
 			if line.begins_with("waypoint") and line.contains("="):
 				line = line.split("=", false, 1)[1].strip_edges()
 			var fields := line.replace("\t", " ").split(" ", false)
@@ -91,6 +110,7 @@ static func parse_text(text: String, source_name: String = "trajectory") -> Dict
 				numbers.append(number)
 			coordinates_mm.append(Vector3(numbers[0], numbers[1], numbers[2]))
 			yaw_degrees.append(numbers[3] if values.size() == 4 else 0.0)
+			waypoint_events.append([])
 			continue
 
 		return _error("%s:%d: expected a trajectory parameter or waypoint" % [source_name, line_number])
@@ -105,6 +125,7 @@ static func parse_text(text: String, source_name: String = "trajectory") -> Dict
 		"loop": loop,
 		"coordinates_mm": coordinates_mm,
 		"yaw_degrees": yaw_degrees,
+		"waypoint_events": waypoint_events,
 	}
 
 

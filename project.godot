@@ -14,6 +14,10 @@ config/name="MG400 Cartesian IK Demo"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.7")
 
+[autoload]
+
+RuntimeRecorder="*res://addons/runtime_recorder/runtime_recorder.gd"
+
 [display]
 
 window/size/viewport_width=1280
@@ -22,7 +26,23 @@ window/size/window_width_override=1280
 window/size/window_height_override=720
 window/stretch/mode="canvas_items"
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/runtime_recorder/plugin.cfg")
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+
+[runtime_recorder]
+
+codec="h264"
+encoder_h264="libx264"
+encoder_h265="libx265"
+fps=30
+width=1280
+height=720
+bitrate_mbps=12
+output_directory="res://recordings"
+ffmpeg_path=""

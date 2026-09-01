@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://cgt1jl3v8bev5"
+path="res://.godot/imported/wrist3_link.obj-4c94f833d7d8db80f571143bedb3ba78.mesh"
+
+[deps]
+
+files=["res://.godot/imported/wrist3_link.obj-4c94f833d7d8db80f571143bedb3ba78.mesh"]
+
+source_file="res://assets/fairino3_v6_obj/wrist3_link.obj"
+dest_files=["res://.godot/imported/wrist3_link.obj-4c94f833d7d8db80f571143bedb3ba78.mesh", "res://.godot/imported/wrist3_link.obj-4c94f833d7d8db80f571143bedb3ba78.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false

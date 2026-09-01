@@ -13,6 +13,7 @@ signal trajectory_started
 signal trajectory_paused
 signal trajectory_resumed
 signal trajectory_completed
+signal trajectory_triggered(key: String)
 
 enum MotionState {
 	IDLE,
@@ -25,6 +26,9 @@ const EPSILON := 0.0000001
 
 var _waypoints: Array[Vector3] = []
 var _yaw_waypoints: PackedFloat32Array = PackedFloat32Array()
+var _waypoint_events: Array[Array] = []
+var _trigger_events: Array[Dictionary] = []
+var _next_trigger_index := 0
 var _segment_lengths: PackedFloat32Array = PackedFloat32Array()
 var _segment_directions: Array[Vector3] = []
 var _boundary_speeds: PackedFloat32Array = PackedFloat32Array()
@@ -52,7 +56,8 @@ func plan_world_path(
 	desired_speed_mm_s: float,
 	acceleration_mm_s2: float = 500.0,
 	junction_deviation_mm: float = 1.0,
-	yaw_radians: PackedFloat32Array = PackedFloat32Array()
+	yaw_radians: PackedFloat32Array = PackedFloat32Array(),
+	waypoint_events: Array = []
 ) -> bool:
 	_clear_plan()
 	if coordinates.size() < 2:
@@ -64,6 +69,9 @@ func plan_world_path(
 	if not yaw_radians.is_empty() and yaw_radians.size() != coordinates.size():
 		push_error("Yaw waypoint count must match coordinate count")
 		return false
+	if not waypoint_events.is_empty() and waypoint_events.size() != coordinates.size():
+		push_error("Waypoint event count must match coordinate count")
+		return false
 
 	_feed_speed_mps = desired_speed_mm_s / 1000.0
 	_acceleration_mps2 = acceleration_mm_s2 / 1000.0
@@ -74,13 +82,17 @@ func plan_world_path(
 	# geometry rather than motion blocks.
 	_waypoints.append(coordinates[0])
 	_yaw_waypoints.append(yaw_radians[0] if not yaw_radians.is_empty() else 0.0)
+	_waypoint_events.append(waypoint_events[0].duplicate(true) if not waypoint_events.is_empty() else [])
 	for index in range(1, coordinates.size()):
 		if coordinates[index].distance_to(_waypoints[-1]) <= EPSILON:
 			if not yaw_radians.is_empty():
 				_yaw_waypoints[_yaw_waypoints.size() - 1] = yaw_radians[index]
+			if not waypoint_events.is_empty():
+				_waypoint_events[_waypoint_events.size() - 1].append_array(waypoint_events[index].duplicate(true))
 			continue
 		_waypoints.append(coordinates[index])
 		_yaw_waypoints.append(yaw_radians[index] if not yaw_radians.is_empty() else 0.0)
+		_waypoint_events.append(waypoint_events[index].duplicate(true) if not waypoint_events.is_empty() else [])
 
 	if _waypoints.size() < 2:
 		push_error("Cartesian trajectory contains no non-zero moves")
@@ -101,8 +113,10 @@ func start() -> void:
 		return
 	_elapsed_seconds = 0.0
 	_phase_index = 0
+	_next_trigger_index = 0
 	_state = MotionState.RUNNING
 	_sample_at_elapsed_time()
+	_emit_due_triggers()
 	trajectory_started.emit()
 
 
@@ -131,6 +145,7 @@ func advance(delta: float) -> Dictionary:
 		return get_current_pose()
 	_elapsed_seconds = minf(_elapsed_seconds + delta, _total_seconds)
 	_sample_at_elapsed_time()
+	_emit_due_triggers()
 	if _elapsed_seconds >= _total_seconds - EPSILON:
 		_current_position = _waypoints[-1]
 		_current_yaw = _yaw_waypoints[-1]
@@ -228,6 +243,9 @@ func _clear_plan() -> void:
 	_phase_index = 0
 	_state = MotionState.IDLE
 	_current_speed_mps = 0.0
+	_waypoint_events.clear()
+	_trigger_events.clear()
+	_next_trigger_index = 0
 
 
 func _build_segments() -> void:
@@ -284,6 +302,7 @@ func _junction_speed_limit(incoming: Vector3, outgoing: Vector3) -> float:
 
 
 func _build_motion_phases() -> void:
+	_append_waypoint_events(0)
 	for segment in range(_segment_lengths.size()):
 		var length := _segment_lengths[segment]
 		var entry_speed := _boundary_speeds[segment]
@@ -315,6 +334,33 @@ func _build_motion_phases() -> void:
 		if deceleration_distance > EPSILON:
 			var duration := (peak_speed - exit_speed) / _acceleration_mps2
 			_append_phase(segment, segment_distance, peak_speed, -_acceleration_mps2, duration)
+		_append_waypoint_events(segment + 1)
+
+
+func _append_waypoint_events(waypoint_index: int) -> void:
+	if waypoint_index < 0 or waypoint_index >= _waypoint_events.size():
+		return
+	for event in _waypoint_events[waypoint_index]:
+		var event_type: String = str(event.get("type", "")).to_lower()
+		if event_type == "trigger":
+			_trigger_events.append({
+				"time": _total_seconds,
+				"key": str(event.get("key", "")).to_lower(),
+			})
+		elif event_type == "delay":
+			_append_hold_phase(waypoint_index, float(event.get("seconds", 0.0)))
+
+
+func _append_hold_phase(waypoint_index: int, duration: float) -> void:
+	if duration <= EPSILON:
+		return
+	_phases.append({
+		"start_time": _total_seconds,
+		"duration": duration,
+		"type": "hold",
+		"waypoint": waypoint_index,
+	})
+	_total_seconds += duration
 
 
 func _append_phase(
@@ -349,6 +395,12 @@ func _sample_at_elapsed_time() -> void:
 		_phase_index -= 1
 
 	var phase := _phases[_phase_index]
+	if str(phase.get("type", "motion")) == "hold":
+		var hold_waypoint: int = int(phase.waypoint)
+		_current_position = _waypoints[hold_waypoint]
+		_current_yaw = _yaw_waypoints[hold_waypoint]
+		_current_speed_mps = 0.0
+		return
 	var local_time: float = clampf(
 		_elapsed_seconds - float(phase.start_time),
 		0.0,
@@ -366,3 +418,12 @@ func _sample_at_elapsed_time() -> void:
 	_current_position = _waypoints[segment].lerp(_waypoints[segment + 1], interpolation)
 	_current_yaw = lerp_angle(_yaw_waypoints[segment], _yaw_waypoints[segment + 1], interpolation)
 	_current_speed_mps = maxf(start_speed + acceleration * local_time, 0.0)
+
+
+func _emit_due_triggers() -> void:
+	while _next_trigger_index < _trigger_events.size():
+		var event: Dictionary = _trigger_events[_next_trigger_index]
+		if float(event.get("time", 0.0)) > _elapsed_seconds + EPSILON:
+			break
+		trajectory_triggered.emit(str(event.get("key", "")))
+		_next_trigger_index += 1

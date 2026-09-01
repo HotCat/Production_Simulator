@@ -80,7 +80,7 @@ light_energy = 1.35
 shadow_enabled = true
 
 [node name="FillLight" type="OmniLight3D" parent="." unique_id=893353201]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.24688411, 0.45, -0.45873827)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.23945296, 0.45, -0.06534469)
 light_color = Color(0.35, 0.62, 1, 1)
 light_energy = 2.0
 omni_range = 1.4
@@ -136,6 +136,36 @@ grow_horizontal = 0
 button_pressed = true
 text = "Show info"
 
+[node name="ConveyorInfoToggle" type="CheckBox" parent="UI" unique_id=1954385047]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -205.0
+offset_top = 58.0
+offset_right = -24.0
+offset_bottom = 88.0
+grow_horizontal = 0
+button_pressed = true
+text = "Show conveyor info"
+
+[node name="RecordingIndicator" type="Label" parent="UI" unique_id=1243850650]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -480.0
+offset_top = 20.0
+offset_right = -220.0
+offset_bottom = 62.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(0.603, 0.659, 0.722, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.75)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 14
+text = "● REC OFF  ·  F9 to start"
+horizontal_alignment = 2
+vertical_alignment = 1
+
 [node name="IKIndicator" type="Label" parent="UI" unique_id=3147757]
 anchors_preset = 1
 anchor_left = 1.0
@@ -157,9 +187,9 @@ anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
 offset_left = -300.0
-offset_top = 68.0
+offset_top = 94.0
 offset_right = -24.0
-offset_bottom = 260.0
+offset_bottom = 318.0
 grow_horizontal = 0
 theme_override_styles/panel = SubResource("PanelStyle")
 
@@ -233,6 +263,11 @@ layout_mode = 2
 text = "RUNNING  ·  Stop at Y 228.0 mm"
 label_settings = SubResource("SmallSettings")
 
+[node name="ProductionStats" type="Label" parent="UI/FlowControls/VBox" unique_id=183206849]
+layout_mode = 2
+text = "Q PACE  --/min  ·  Δ --  ·  N 0"
+label_settings = SubResource("SmallSettings")
+
 [node name="Margin" type="PanelContainer" parent="UI" unique_id=1988247544]
 offset_left = 24.0
 offset_top = 24.0
@@ -264,7 +299,7 @@ layout_mode = 2
 text = "IK"
 label_settings = SubResource("TextSettings")
 
-[node name="Trajectory" type="Label" parent="UI/Margin/VBox"]
+[node name="Trajectory" type="Label" parent="UI/Margin/VBox" unique_id=1325897029]
 layout_mode = 2
 text = "TRAJECTORY"
 label_settings = SubResource("SmallSettings")
@@ -287,5 +322,5 @@ label_settings = SubResource("SmallSettings")
 [node name="Help" type="Label" parent="UI/Margin/VBox" unique_id=453564073]
 layout_mode = 2
 text = "Trackpad: two-finger orbit  ·  Ctrl + two-finger zoom  ·  Shift + two-finger pan
-SPACE auto/manual  ·  Arrows X/Y  ·  R/F Z  ·  Q resume/yaw  ·  E yaw  ·  0/Delete target reset  ·  C camera reset"
+SPACE auto/manual  ·  Arrows X/Y  ·  R/F Z  ·  Q resume/yaw  ·  W show label  ·  E hide label/yaw  ·  0/Delete target reset  ·  C camera reset"
 label_settings = SubResource("SmallSettings")
