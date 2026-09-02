@@ -21,6 +21,27 @@ func _initialize() -> void:
 		passed = passed and scene.get_node_or_null("UI/OrientationPanel/Margin/VBox/Orientation%dRow/SpinBox" % i) != null
 	for i in 6:
 		passed = passed and scene.get_node_or_null("UI/AxisPanel/Margin/VBox/Axis%dRow/SpinBox" % (i + 1)) != null
+	for i in 3:
+		passed = passed and scene.get_node_or_null("UI/TranslationPanel/Margin/VBox/Translation%dRow/SpinBox" % i) != null
+	var initial_tcp := robot.get_tcp_world_position()
+	var translated_reachable: bool = robot.translate_tcp(Vector3(0.01, 0.0, 0.0), true)
+	var translated_tcp := robot.get_tcp_world_position()
+	var translation_ok := absf((translated_tcp.x - initial_tcp.x) - 0.01) < 0.002
+	print("Fairino3 TCP translate reachable=", translated_reachable, " delta=", translated_tcp - initial_tcp)
+	passed = passed and translated_reachable and translation_ok
+	var joints_before_tcp_calibration := robot.get_joint_angles()
+	scene.call("_on_translation_value_changed", 20.0, 0)
+	var joints_after_tcp_calibration := robot.get_joint_angles()
+	var flange_to_tcp := robot.get_tcp_world_position() - robot.get_flange_world_position()
+	var flange_local_delta := robot.get_tcp_world_basis().inverse() * flange_to_tcp
+	var joints_unchanged := true
+	for i in 6:
+		joints_unchanged = joints_unchanged and absf(joints_before_tcp_calibration[i] - joints_after_tcp_calibration[i]) < 0.000001
+	var tcp_calibration_ok := joints_unchanged and absf(flange_local_delta.x - 0.02) < 0.0005
+	passed = passed and tcp_calibration_ok
+	robot.set_tcp_translation_offset_world(Vector3.ZERO)
+	scene.tcp_translation_offset = Vector3.ZERO
+	scene.call("_sync_translation_controls")
 	scene.call("_on_axis_value_changed", 25.0, 0)
 	passed = passed and not scene.automatic and scene.axis_override
 	passed = passed and absf(rad_to_deg(robot.get_joint_angles()[0]) - 25.0) < 0.01

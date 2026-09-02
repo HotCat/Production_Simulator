@@ -251,6 +251,14 @@ drag pauses the trajectory, invokes the six-axis IK solver, and leaves the
 gizmo attached to the actual TCP. The panel reports `IK REACHABLE` for a valid
 target and `IK CLAMPED` when a drag exceeds the workspace.
 
+The **TCP FLANGE OFFSET (MM)** panel defines the tool-center-point calibration
+relative to the J6 flange. X/Y/Z use the flange axes (including flange Z), so
+the offset rotates with the tool as the cobot moves. Entering an offset pauses
+automatic playback and moves only the TCP marker/gizmo; the robot joints and
+flange stay fixed, matching a cobot pendant TCP setup. The public
+`Fairino3Robot.translate_tcp()` method remains available for scripted relative
+Cartesian moves in metres and does command the IK solver.
+
 Pose-entry focus is mouse-scoped: click a Roll/Pitch/Yaw or J1–J6 field to
 edit it. As the pointer enters any UI panel, an edited field is automatically
 defocused; clicking `Align Flange to Base`, `Capture Current`, or another

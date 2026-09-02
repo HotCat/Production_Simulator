@@ -47,6 +47,7 @@ var _urdf_root: Node3D
 var _joint_frames: Array[Node3D] = []
 var _joint_rotors: Array[Node3D] = []
 var _tcp: Marker3D
+var _tcp_translation_offset_flange := Vector3.ZERO
 var _joint_angles := PackedFloat32Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 var _target_angles := PackedFloat32Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 var _last_reachable := true
@@ -131,6 +132,47 @@ func get_tcp_world_position() -> Vector3:
 
 func get_tcp_world_basis() -> Basis:
 	return _tcp.global_basis.orthonormalized()
+
+
+func get_flange_world_position() -> Vector3:
+	# The flange center is the J6 mounting face before any user-defined TCP
+	# calibration offset is applied.
+	return _tcp.get_parent().to_global(J6_FLANGE_OFFSET)
+
+
+func get_tcp_translation_offset_flange() -> Vector3:
+	return _tcp_translation_offset_flange
+
+
+## Defines the TCP calibration offset without changing any joint angles. The
+## offset is expressed in the J6 flange frame, so its Z axis always follows
+## the flange/tool axis as the robot moves.
+func set_tcp_translation_offset_flange(offset: Vector3) -> void:
+	_tcp_translation_offset_flange = offset
+	if _tcp == null:
+		return
+	_tcp.position = J6_FLANGE_OFFSET + offset
+
+
+## Backward-compatible spelling for callers using the earlier API name. The
+## values are now correctly interpreted in the flange frame.
+func set_tcp_translation_offset_world(offset: Vector3) -> void:
+	set_tcp_translation_offset_flange(offset)
+
+
+## Translate the TCP by a world-space offset in metres while preserving its
+## current orientation. This is useful for Cartesian jog controls and for
+## callers that want a small relative move without solving a new rotation.
+func translate_tcp(offset: Vector3, immediate := false) -> bool:
+	var translated_position := get_tcp_world_position() + offset
+	# Translation is intentionally position-first: the existing Cartesian solver
+	# preserves the current tool yaw while avoiding the numerical conditioning of
+	# a full six-DOF pose solve for a small relative move.
+	var current_basis := get_tcp_world_basis()
+	var current_yaw := atan2(current_basis.x.z, current_basis.x.x)
+	return set_tcp_target_world(translated_position, current_yaw, immediate)
+
+
 
 
 func urdf_position_to_world(position_m: Vector3) -> Vector3:

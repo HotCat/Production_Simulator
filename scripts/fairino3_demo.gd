@@ -13,6 +13,7 @@ const Parser = preload("res://scripts/trajectory_file_parser.gd")
 @onready var header_panel: PanelContainer = $UI/Panel
 @onready var axis_panel: PanelContainer = $UI/AxisPanel
 @onready var orientation_panel: PanelContainer = $UI/OrientationPanel
+@onready var translation_panel: PanelContainer = $UI/TranslationPanel
 @onready var tcp_gizmo: TcpGizmo = $TcpGizmo
 @onready var orientation_lock: CheckBox = $UI/OrientationPanel/Margin/VBox/LockOrientation
 @onready var pose_reachability: Label = $UI/OrientationPanel/Margin/VBox/PoseReachability
@@ -22,14 +23,19 @@ var planner := Planner.new()
 var automatic := true
 var loop_trajectory := true
 var target_position := Vector3.ZERO
+var base_target_position := Vector3.ZERO
+# User-defined TCP calibration in the J6 flange frame (metres).
+var tcp_translation_offset := Vector3.ZERO
 var target_yaw := 0.0
 var reachable := true
 var axis_override := false
 var updating_axis_ui := false
 var axis_spins: Array[SpinBox] = []
 var orientation_spins: Array[SpinBox] = []
+var translation_spins: Array[SpinBox] = []
 var target_world_euler := Vector3.ZERO
 var updating_orientation_ui := false
+var updating_translation_ui := false
 var runtime_recorder: Node
 var _pointer_over_ui := false
 
@@ -40,6 +46,7 @@ const RESET_URDF_POSITION := Vector3(0.22, 0.0, 0.30)
 
 func _ready() -> void:
 	target_position = robot.urdf_position_to_world(Vector3(0.22, 0.0, 0.30))
+	base_target_position = target_position
 	robot.set_tcp_target_world(target_position, target_yaw, true)
 	target_world_euler = robot.get_tcp_world_basis().get_euler()
 	var points: Array[Vector3] = [
@@ -65,10 +72,16 @@ func _ready() -> void:
 		orientation_spins.append(spin)
 		_configure_pose_spin(spin)
 		spin.value_changed.connect(_on_orientation_value_changed.bind(index))
+	for index in 3:
+		var spin := get_node("UI/TranslationPanel/Margin/VBox/Translation%dRow/SpinBox" % index) as SpinBox
+		translation_spins.append(spin)
+		_configure_pose_spin(spin)
+		spin.value_changed.connect(_on_translation_value_changed.bind(index))
 	orientation_lock.toggled.connect(_on_orientation_lock_toggled)
 	$UI/OrientationPanel/Margin/VBox/Buttons/AlignWorld.pressed.connect(_on_align_world_pressed)
 	$UI/OrientationPanel/Margin/VBox/Buttons/CaptureCurrent.pressed.connect(_on_capture_current_pressed)
 	_sync_orientation_controls()
+	_sync_translation_controls()
 	tcp_gizmo.target_dragged.connect(_on_tcp_gizmo_dragged)
 	# RuntimeRecorder is an autoload shared by both the MG400 and Fairino3
 	# scenes.  Connecting here keeps the Fairino3 standalone scene's status
@@ -88,6 +101,7 @@ func _process(delta: float) -> void:
 	if automatic:
 		var pose: Dictionary = planner.advance(delta)
 		target_position = pose.position
+		base_target_position = target_position
 		target_yaw = pose.yaw
 		if orientation_lock.button_pressed:
 			target_world_euler.y = target_yaw
@@ -96,6 +110,7 @@ func _process(delta: float) -> void:
 	else:
 		if not axis_override:
 			_update_manual_target(delta)
+		base_target_position = target_position
 	if not axis_override:
 		if orientation_lock.button_pressed:
 			reachable = robot.set_tcp_target_pose_world(
@@ -143,6 +158,7 @@ func _input(event: InputEvent) -> void:
 			else:
 				planner.pause()
 				target_position = robot.get_tcp_world_position()
+				base_target_position = target_position
 			get_viewport().set_input_as_handled()
 		elif key.keycode == KEY_L:
 			loop_trajectory = not loop_trajectory
@@ -151,8 +167,12 @@ func _input(event: InputEvent) -> void:
 			automatic = false
 			axis_override = false
 			planner.pause()
-			target_position = robot.urdf_position_to_world(RESET_URDF_POSITION)
+			tcp_translation_offset = Vector3.ZERO
+			robot.set_tcp_translation_offset_flange(Vector3.ZERO)
+			base_target_position = robot.urdf_position_to_world(RESET_URDF_POSITION)
+			target_position = base_target_position
 			target_yaw = 0.0
+			_sync_translation_controls()
 			get_viewport().set_input_as_handled()
 
 
@@ -170,7 +190,7 @@ func _configure_pose_spin(spin: SpinBox) -> void:
 func _is_ui_bounding_box_hit(position: Vector2) -> bool:
 	# The panels are disjoint, so their rectangles provide an unambiguous
 	# pointer collision test without stealing input from the 3D viewport.
-	for panel in [header_panel, axis_panel, orientation_panel]:
+	for panel in [header_panel, axis_panel, orientation_panel, translation_panel]:
 		if is_instance_valid(panel) and panel.get_global_rect().has_point(position):
 			return true
 	return false
@@ -228,6 +248,7 @@ func _on_axis_value_changed(value: float, axis_index: int) -> void:
 	angles[axis_index] = deg_to_rad(value)
 	robot.set_joint_angles_target(angles, true)
 	target_position = robot.get_tcp_world_position()
+	base_target_position = target_position
 	target_world_euler = robot.get_tcp_world_basis().get_euler()
 	orientation_lock.button_pressed = false
 	reachable = true
@@ -257,6 +278,21 @@ func _on_orientation_value_changed(value: float, index: int) -> void:
 	reachable = robot.set_tcp_target_pose_world(
 		target_position, Basis.from_euler(target_world_euler), true
 	)
+
+
+func _on_translation_value_changed(value: float, index: int) -> void:
+	if updating_translation_ui:
+		return
+	automatic = false
+	axis_override = true
+	planner.pause()
+	tcp_translation_offset[index] = value / 1000.0
+	# This is TCP calibration, not a Cartesian move command: keep all joints
+	# fixed and move only the TCP marker/gizmo away from the J6 flange center.
+	robot.set_tcp_translation_offset_flange(tcp_translation_offset)
+	target_position = robot.get_tcp_world_position()
+	base_target_position = target_position
+	reachable = true
 
 
 func _on_orientation_lock_toggled(enabled: bool) -> void:
@@ -289,6 +325,7 @@ func _on_capture_current_pressed() -> void:
 	axis_override = false
 	planner.pause()
 	target_position = robot.get_tcp_world_position()
+	base_target_position = target_position
 	target_world_euler = robot.get_tcp_world_basis().get_euler()
 	target_yaw = target_world_euler.y
 	orientation_lock.button_pressed = true
@@ -304,6 +341,17 @@ func _sync_orientation_controls() -> void:
 		if absf(orientation_spins[index].value - degrees) > 0.01:
 			orientation_spins[index].value = degrees
 	updating_orientation_ui = false
+
+
+func _sync_translation_controls() -> void:
+	if translation_spins.is_empty():
+		return
+	updating_translation_ui = true
+	for index in 3:
+		var millimetres := tcp_translation_offset[index] * 1000.0
+		if absf(translation_spins[index].value - millimetres) > 0.01:
+			translation_spins[index].value = millimetres
+	updating_translation_ui = false
 
 
 func _load_command_line_trajectory() -> void:
@@ -343,6 +391,7 @@ func _on_tcp_gizmo_dragged(world_position: Vector3) -> void:
 	axis_override = false
 	planner.pause()
 	target_position = world_position
+	base_target_position = target_position
 	if orientation_lock.button_pressed:
 		reachable = robot.set_tcp_target_pose_world(
 			target_position, Basis.from_euler(target_world_euler), true
