@@ -266,6 +266,10 @@ control therefore activates it on the first click. Click the 3D viewport to
 return to TCP navigation. Arrow keys and `R`/`F` then jog the TCP instead of
 changing the text field or moving the UI focus rectangle.
 
+The **OVERLAYS** toolbar provides independent visibility switches for Status,
+Joints, Pose, TCP offset, Pickup, and Recording. Hiding one overlay leaves the
+others interactive and does not change simulation state.
+
 ### Do you need ROS 2 / MoveIt 2?
 
 Not for this visual simulator. Godot has no built-in general-purpose solver
@@ -302,6 +306,38 @@ origin. In the supplied wrist3 STL the mounting face is 100 mm along local +Z
 from the J6 rotation center, so `Fairino3Robot/TCP` is parented under `j6` with
 the URDF-local offset `(0, 0, 0.100 m)`. The TCP gizmo and both IK solvers use
 this flange point.
+
+### H89 product and side-wall gripper
+
+The Fairino3 scene includes an upright H89 calibration product based on
+`cads/H89-converted.dxf`, represented by the requested 37.95 × 46.00 × 4.00 mm
+envelope. Its 46 mm side is vertical and its 4 mm thickness is along local Z.
+`Fairino3Robot/TCP/ParallelJawGripper` is a visual parallel-jaw tool: the jaws
+close across the thin side wall and extend along the TCP/flange +Z direction.
+The product carries two simple fiducial bars and the gripper exposes matching
+reference geometry to make hand-eye and camera-parameter setup repeatable.
+
+The **GRIPPER PICKUP SIMULATION** panel provides two repeatable approaches:
+**Thin side** (the product-width closing setup) and **Long side** (90-degree
+jaw rotation). Each sequence approaches the upright product, closes the jaws,
+attaches the product to the TCP, lifts it, and moves it to a fixed placement
+pose. Press **Reset pickup** after each run to return the product and jaws to
+their initial state and try another method. Pickup motion uses the same
+LinuxCNC-style Cartesian planner as trajectory files, including acceleration
+limits and a `grip_close` waypoint trigger; it is not a timer-based teleport.
+At the grasp trigger the planner pauses while the robot physically settles at
+the computed jaw/product overlap pose. The jaws then close for a short visible
+close cycle, and only after that cycle does the product reparent to the gripper;
+this keeps the product stationary during approach and prevents a teleport into
+the final carry pose.
+The approach state opens the jaws to a 50 mm inner gap (wide enough to clear
+the complete 37.95 mm product width), while the thin-side grip closes to the
+37.95 mm product width. The rotated long-side grip closes across the 4 mm
+product thickness, with enough travel to reach the opposing front/back faces.
+The product keeps its original upright orientation throughout pickup, and no
+cyan center reference object is added to the gripper. The full-length jaws are
+retained, but the pickup pose seats the product at the jaw end so only its
+upper/end quarter is held while the rest hangs clear for placement.
 
 ```sh
 /Applications/Godot.app/Contents/MacOS/Godot \

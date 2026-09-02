@@ -4,6 +4,7 @@
 [ext_resource type="Script" path="res://scripts/fairino3_robot.gd" id="2_robot"]
 [ext_resource type="Script" path="res://scripts/editor_orbit_camera.gd" id="3_camera"]
 [ext_resource type="Script" path="res://scripts/tcp_gizmo.gd" id="4_gizmo"]
+[ext_resource type="Script" path="res://scripts/h89_product.gd" id="5_product"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
 sky_top_color = Color(0.045, 0.07, 0.12, 1)
@@ -79,6 +80,13 @@ mesh = SubResource("FloorMesh")
 [node name="Fairino3Robot" type="Node3D" parent="."]
 script = ExtResource("2_robot")
 
+[node name="H89CalibrationProduct" type="Node3D" parent="."]
+position = Vector3(0.28, 0.0, 0.08)
+script = ExtResource("5_product")
+metadata/source_cad = "res://cads/H89-converted.dxf"
+metadata/envelope_mm = "37.95 x 46.00 x 4.00"
+metadata/orientation = "upright; 46 mm side vertical; 4 mm side-wall grip"
+
 [node name="TargetMarker" type="MeshInstance3D" parent="."]
 material_override = SubResource("TargetMaterial")
 mesh = SubResource("TargetMesh")
@@ -98,6 +106,42 @@ minimum_distance = 0.16
 maximum_distance = 3.5
 
 [node name="UI" type="CanvasLayer" parent="."]
+
+[node name="OverlayToolbar" type="HBoxContainer" parent="UI"]
+offset_left = 16.0
+offset_top = 4.0
+offset_right = 1264.0
+offset_bottom = 36.0
+theme_override_constants/separation = 8
+
+[node name="Title" type="Label" parent="UI/OverlayToolbar"]
+text = "OVERLAYS:"
+theme_override_colors/font_color = Color(0.4, 0.84, 1, 1)
+theme_override_font_sizes/font_size = 12
+
+[node name="StatusToggle" type="CheckBox" parent="UI/OverlayToolbar"]
+button_pressed = true
+text = "Status"
+
+[node name="JointToggle" type="CheckBox" parent="UI/OverlayToolbar"]
+button_pressed = true
+text = "Joints"
+
+[node name="OrientationToggle" type="CheckBox" parent="UI/OverlayToolbar"]
+button_pressed = true
+text = "Pose"
+
+[node name="TranslationToggle" type="CheckBox" parent="UI/OverlayToolbar"]
+button_pressed = true
+text = "TCP offset"
+
+[node name="PickupToggle" type="CheckBox" parent="UI/OverlayToolbar"]
+button_pressed = true
+text = "Pickup"
+
+[node name="RecordingToggle" type="CheckBox" parent="UI/OverlayToolbar"]
+button_pressed = true
+text = "Recording"
 
 [node name="RecordingIndicator" type="Label" parent="UI"]
 anchors_preset = 1
@@ -373,3 +417,42 @@ min_value = -500.0
 max_value = 500.0
 step = 0.1
 suffix = " mm"
+
+[node name="PickupPanel" type="PanelContainer" parent="UI"]
+offset_left = 615.0
+offset_top = 174.0
+offset_right = 945.0
+offset_bottom = 330.0
+theme_override_styles/panel = SubResource("PanelStyle")
+
+[node name="Margin" type="MarginContainer" parent="UI/PickupPanel"]
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 9
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 9
+
+[node name="VBox" type="VBoxContainer" parent="UI/PickupPanel/Margin"]
+
+[node name="Title" type="Label" parent="UI/PickupPanel/Margin/VBox"]
+text = "GRIPPER PICKUP SIMULATION"
+theme_override_colors/font_color = Color(0.4, 0.84, 1, 1)
+theme_override_font_sizes/font_size = 14
+
+[node name="State" type="Label" parent="UI/PickupPanel/Margin/VBox"]
+text = "State: READY"
+
+[node name="Buttons" type="HBoxContainer" parent="UI/PickupPanel/Margin/VBox"]
+
+[node name="ThinSide" type="Button" parent="UI/PickupPanel/Margin/VBox/Buttons"]
+size_flags_horizontal = 3
+text = "Thin side"
+tooltip_text = "Open 50 mm, clear the product width, then close on the 4 mm edge"
+
+[node name="LongSide" type="Button" parent="UI/PickupPanel/Margin/VBox/Buttons"]
+size_flags_horizontal = 3
+text = "Long side"
+tooltip_text = "Rotate jaw axis around tool Z and approach the long side"
+
+[node name="ResetPickup" type="Button" parent="UI/PickupPanel/Margin/VBox"]
+size_flags_horizontal = 3
+text = "Reset pickup"

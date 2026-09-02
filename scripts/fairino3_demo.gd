@@ -14,12 +14,24 @@ const Parser = preload("res://scripts/trajectory_file_parser.gd")
 @onready var axis_panel: PanelContainer = $UI/AxisPanel
 @onready var orientation_panel: PanelContainer = $UI/OrientationPanel
 @onready var translation_panel: PanelContainer = $UI/TranslationPanel
+@onready var pickup_panel: PanelContainer = $UI/PickupPanel
+@onready var calibration_product: Node3D = $H89CalibrationProduct
+@onready var overlay_toolbar: HBoxContainer = $UI/OverlayToolbar
+@onready var overlay_toggles: Array[CheckBox] = [
+	$UI/OverlayToolbar/StatusToggle,
+	$UI/OverlayToolbar/JointToggle,
+	$UI/OverlayToolbar/OrientationToggle,
+	$UI/OverlayToolbar/TranslationToggle,
+	$UI/OverlayToolbar/PickupToggle,
+	$UI/OverlayToolbar/RecordingToggle,
+]
 @onready var tcp_gizmo: TcpGizmo = $TcpGizmo
 @onready var orientation_lock: CheckBox = $UI/OrientationPanel/Margin/VBox/LockOrientation
 @onready var pose_reachability: Label = $UI/OrientationPanel/Margin/VBox/PoseReachability
 @onready var recording_indicator: Label = $UI/RecordingIndicator
 
 var planner := Planner.new()
+var pickup_planner := Planner.new()
 var automatic := true
 var loop_trajectory := true
 var target_position := Vector3.ZERO
@@ -38,6 +50,27 @@ var updating_orientation_ui := false
 var updating_translation_ui := false
 var runtime_recorder: Node
 var _pointer_over_ui := false
+var pickup_active := false
+var pickup_step := -1
+var pickup_elapsed := 0.0
+var pickup_strategy := "thin side wall"
+var product_picked := false
+var product_initial_transform := Transform3D.IDENTITY
+var product_initial_basis := Basis.IDENTITY
+var product_initial_parent: Node
+var gripper: Node3D
+var pickup_flange_basis := Fairino3Robot.FLANGE_PARALLEL_TO_BASE_BASIS
+var pickup_grasp_position := Vector3.ZERO
+var pickup_grasp_progress := 0.0
+var pickup_points_total_length := 0.0
+var pickup_grasp_commanded := false
+var pickup_waiting_for_grasp := false
+var pickup_jaw_closing := false
+var pickup_jaw_close_elapsed := 0.0
+
+const PICKUP_JAW_CLOSE_TIME_S := 0.22
+const PICKUP_POSITION_TOLERANCE_M := 0.002
+const PICKUP_ORIENTATION_TOLERANCE_RAD := 0.035
 
 const MANUAL_JOG_SPEED_MPS := 0.12
 const MANUAL_YAW_SPEED_RAD_S := 1.5
@@ -45,6 +78,9 @@ const RESET_URDF_POSITION := Vector3(0.22, 0.0, 0.30)
 
 
 func _ready() -> void:
+	product_initial_transform = calibration_product.transform
+	product_initial_basis = calibration_product.global_basis
+	product_initial_parent = calibration_product.get_parent()
 	target_position = robot.urdf_position_to_world(Vector3(0.22, 0.0, 0.30))
 	base_target_position = target_position
 	robot.set_tcp_target_world(target_position, target_yaw, true)
@@ -82,6 +118,18 @@ func _ready() -> void:
 	$UI/OrientationPanel/Margin/VBox/Buttons/CaptureCurrent.pressed.connect(_on_capture_current_pressed)
 	_sync_orientation_controls()
 	_sync_translation_controls()
+	gripper = robot.find_child("ParallelJawGripper", true, false) as Node3D
+	pickup_planner.trajectory_triggered.connect(_on_pickup_triggered)
+	$UI/PickupPanel/Margin/VBox/Buttons/ThinSide.pressed.connect(_start_thin_side_pickup)
+	$UI/PickupPanel/Margin/VBox/Buttons/LongSide.pressed.connect(_start_long_side_pickup)
+	$UI/PickupPanel/Margin/VBox/ResetPickup.pressed.connect(reset_pickup)
+	overlay_toggles[0].toggled.connect(_on_status_overlay_toggled)
+	overlay_toggles[1].toggled.connect(_on_joint_overlay_toggled)
+	overlay_toggles[2].toggled.connect(_on_orientation_overlay_toggled)
+	overlay_toggles[3].toggled.connect(_on_translation_overlay_toggled)
+	overlay_toggles[4].toggled.connect(_on_pickup_overlay_toggled)
+	overlay_toggles[5].toggled.connect(_on_recording_overlay_toggled)
+	reset_pickup()
 	tcp_gizmo.target_dragged.connect(_on_tcp_gizmo_dragged)
 	# RuntimeRecorder is an autoload shared by both the MG400 and Fairino3
 	# scenes.  Connecting here keeps the Fairino3 standalone scene's status
@@ -98,7 +146,9 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	if automatic:
+	if pickup_active:
+		_process_pickup(delta)
+	elif automatic:
 		var pose: Dictionary = planner.advance(delta)
 		target_position = pose.position
 		base_target_position = target_position
@@ -111,7 +161,7 @@ func _process(delta: float) -> void:
 		if not axis_override:
 			_update_manual_target(delta)
 		base_target_position = target_position
-	if not axis_override:
+	if not axis_override and not pickup_active:
 		if orientation_lock.button_pressed:
 			reachable = robot.set_tcp_target_pose_world(
 				target_position, Basis.from_euler(target_world_euler)
@@ -125,6 +175,152 @@ func _process(delta: float) -> void:
 	_sync_axis_controls()
 	_sync_orientation_controls()
 	_update_ui()
+	_update_pickup_ui()
+
+
+func _start_thin_side_pickup() -> void:
+	_start_pickup("thin side wall", Vector3.ZERO)
+
+
+func _start_long_side_pickup() -> void:
+	_start_pickup("long side wall", Vector3(0.0, 0.0, PI * 0.5))
+
+
+func _start_pickup(strategy: String, jaw_rotation: Vector3) -> void:
+	reset_pickup()
+	pickup_strategy = strategy
+	pickup_active = true
+	pickup_step = 0
+	pickup_elapsed = 0.0
+	pickup_grasp_commanded = false
+	pickup_waiting_for_grasp = false
+	pickup_jaw_closing = false
+	pickup_jaw_close_elapsed = 0.0
+	automatic = false
+	axis_override = true
+	planner.pause()
+	if gripper != null:
+		gripper.rotation = jaw_rotation
+		# Thin-side closes across the 37.95 mm width. Long-side rotates the jaw
+		# axis onto the product depth and closes across its 4 mm thickness.
+		gripper.call("set_product_span", 0.0045 if strategy == "long side wall" else 0.03795)
+		gripper.call("set_jaws_closed", false)
+	# The gripper extends roughly 130 mm below the flange. Derive the grasp TCP
+	# from the product's current origin and the exact seating offset used by
+	# _attach_product_to_gripper(). This makes the jaws arrive at the product,
+	# rather than moving to a hard-coded point and then snapping the product on
+	# reparent. The approach point is a short vertical clearance above grasp.
+	var tool_basis := pickup_flange_basis * Basis.from_euler(jaw_rotation)
+	var product_origin := calibration_product.global_position
+	var grasp := product_origin - tool_basis * Vector3(0.0, 0.0, 0.130) + Vector3(0.0, 0.023, 0.0)
+	var approach := grasp + Vector3(0.0, 0.050, 0.0)
+	pickup_grasp_position = grasp
+	var place := Vector3(0.40, 0.30, 0.16)
+	var points: Array[Vector3] = [robot.get_tcp_world_position(), approach, grasp, approach, place]
+	pickup_points_total_length = 0.0
+	for index in range(points.size() - 1):
+		pickup_points_total_length += points[index].distance_to(points[index + 1])
+	pickup_grasp_progress = (points[0].distance_to(points[1]) + points[1].distance_to(points[2])) / maxf(pickup_points_total_length, 0.000001)
+	var events: Array = [[], [], [{"type": "trigger", "key": "grip_close"}], [], []]
+	pickup_planner.plan_world_path(points, 80.0, 300.0, 1.0, PackedFloat32Array(), events)
+	pickup_planner.start()
+	_update_pickup_ui()
+
+
+func _process_pickup(delta: float) -> void:
+	var pose: Dictionary = pickup_planner.advance(delta)
+	# Keep this explicitly typed: the planner returns a Dictionary/Variant and
+	# Godot cannot infer the ternary's Vector3 type in headless builds.
+	var commanded_position: Vector3 = pickup_grasp_position if (pickup_waiting_for_grasp or pickup_jaw_closing) else (pose.get("position", robot.get_tcp_world_position()) as Vector3)
+	robot.set_tcp_target_pose_world(commanded_position, pickup_flange_basis)
+	var grasp_position_error := robot.get_tcp_world_position().distance_to(pickup_grasp_position)
+	var grasp_orientation_error := (
+		(robot.get_tcp_world_basis() * pickup_flange_basis.inverse()).get_rotation_quaternion().get_angle()
+	)
+	if pickup_waiting_for_grasp and grasp_position_error < PICKUP_POSITION_TOLERANCE_M and grasp_orientation_error < PICKUP_ORIENTATION_TOLERANCE_RAD:
+		pickup_waiting_for_grasp = false
+		pickup_jaw_closing = true
+		pickup_jaw_close_elapsed = 0.0
+		# The robot has physically arrived at the overlap pose. Only now do the
+		# jaws close; the product remains stationary until the close completes.
+		if gripper != null:
+			gripper.call("set_jaws_closed", true)
+	if pickup_jaw_closing:
+		pickup_jaw_close_elapsed += delta
+		if pickup_jaw_close_elapsed >= PICKUP_JAW_CLOSE_TIME_S:
+			pickup_jaw_closing = false
+			_attach_product_to_gripper()
+			pickup_planner.resume()
+	if product_picked:
+		# Keep the product's original upright world orientation while it follows
+		# the gripper translation; pickup must not twist the CAD part.
+		calibration_product.global_basis = product_initial_basis
+	# The planner emits grip_close at this waypoint. Keep a geometric fallback
+	# for frames that advance across the trigger in one large simulation tick.
+	if not product_picked and not pickup_grasp_commanded and pickup_planner.get_progress_normalized() >= pickup_grasp_progress:
+		_on_pickup_triggered("grip_close")
+	target_position = commanded_position
+	base_target_position = target_position
+	if pickup_planner.is_completed():
+		pickup_step = 4
+		pickup_active = false
+		axis_override = true
+	_update_pickup_ui()
+
+
+func _on_pickup_triggered(key: String) -> void:
+	if key != "grip_close" or not pickup_active or pickup_grasp_commanded:
+		return
+	pickup_step = 2
+	pickup_grasp_commanded = true
+	pickup_waiting_for_grasp = true
+	pickup_jaw_closing = false
+	pickup_jaw_close_elapsed = 0.0
+	pickup_planner.pause()
+
+
+func _attach_product_to_gripper() -> void:
+	if product_picked or calibration_product == null or gripper == null:
+		return
+	product_picked = true
+	calibration_product.reparent(gripper, true)
+	# Keep the CAD envelope upright in the world while seating its thin edge
+	# between the pads. Product local X/Y/Z map to gripper Y/Z/X respectively:
+	# width spans the jaw height, the 46 mm side follows the finger length, and
+	# the 4 mm thickness is exactly along the jaw closing axis.
+	# Seat the product past the jaw center so only the upper/end quarter of the
+	# full-length fingers overlaps it. The rest of the product hangs below the
+	# gripper, matching the reference pickup pose and leaving placement clearance.
+	var grasp_center_world := gripper.to_global(Vector3(0.0, 0.0, 0.130))
+	calibration_product.global_basis = product_initial_basis
+	calibration_product.global_position = grasp_center_world + Vector3(0.0, -0.023, 0.0)
+
+
+func reset_pickup() -> void:
+	pickup_active = false
+	pickup_planner.stop()
+	pickup_grasp_commanded = false
+	pickup_waiting_for_grasp = false
+	pickup_jaw_closing = false
+	pickup_jaw_close_elapsed = 0.0
+	pickup_step = -1
+	pickup_elapsed = 0.0
+	product_picked = false
+	if calibration_product != null and product_initial_parent != null:
+		calibration_product.reparent(product_initial_parent, false)
+		calibration_product.transform = product_initial_transform
+	if gripper != null:
+		gripper.rotation = Vector3.ZERO
+		gripper.call("set_product_span", 0.03795)
+		gripper.call("set_jaws_closed", false)
+	_update_pickup_ui()
+
+
+func _update_pickup_ui() -> void:
+	if pickup_panel == null:
+		return
+	var state := "READY" if pickup_step < 0 else ("PLACED" if pickup_step >= 4 else ("AT GRASP · CLOSING" if pickup_jaw_closing else ("WAITING FOR GRASP" if pickup_waiting_for_grasp else "PICKING")))
+	$UI/PickupPanel/Margin/VBox/State.text = "State: %s  ·  %s" % [state, pickup_strategy]
 
 
 func _input(event: InputEvent) -> void:
@@ -190,10 +386,34 @@ func _configure_pose_spin(spin: SpinBox) -> void:
 func _is_ui_bounding_box_hit(position: Vector2) -> bool:
 	# The panels are disjoint, so their rectangles provide an unambiguous
 	# pointer collision test without stealing input from the 3D viewport.
-	for panel in [header_panel, axis_panel, orientation_panel, translation_panel]:
+	for panel in [overlay_toolbar, header_panel, axis_panel, orientation_panel, translation_panel, pickup_panel]:
 		if is_instance_valid(panel) and panel.get_global_rect().has_point(position):
 			return true
 	return false
+
+
+func _on_status_overlay_toggled(visible: bool) -> void:
+	header_panel.visible = visible
+
+
+func _on_joint_overlay_toggled(visible: bool) -> void:
+	axis_panel.visible = visible
+
+
+func _on_orientation_overlay_toggled(visible: bool) -> void:
+	orientation_panel.visible = visible
+
+
+func _on_translation_overlay_toggled(visible: bool) -> void:
+	translation_panel.visible = visible
+
+
+func _on_pickup_overlay_toggled(visible: bool) -> void:
+	pickup_panel.visible = visible
+
+
+func _on_recording_overlay_toggled(visible: bool) -> void:
+	recording_indicator.visible = visible
 
 
 func _release_pose_focus() -> void:

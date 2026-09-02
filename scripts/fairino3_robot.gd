@@ -9,6 +9,7 @@ extends Node3D
 signal target_reachability_changed(reachable: bool)
 
 const LINK_DIR := "res://assets/fairino3_v6_obj/"
+const GRIPPER_SCRIPT := preload("res://scripts/fairino3_gripper.gd")
 const JOINT_LIMITS := [
 	Vector2(-3.0543, 3.0543), Vector2(-4.6251, 1.4835),
 	Vector2(-2.8274, 2.8274), Vector2(-4.6251, 1.4835),
@@ -349,6 +350,12 @@ func _build_robot() -> void:
 	tcp.mesh = tcp_mesh
 	tcp.material_override = _make_material(Color("41e0ff"), 0.2, 0.1)
 	_tcp.add_child(tcp)
+	var gripper := Node3D.new()
+	gripper.name = "ParallelJawGripper"
+	gripper.set_script(GRIPPER_SCRIPT)
+	gripper.set_meta("product_grip_mode", "upright thin-side-wall")
+	gripper.set_meta("product_thickness_mm", 4.0)
+	_tcp.add_child(gripper)
 
 
 func _add_mesh(parent: Node3D, link_name: String, material: Material) -> void:

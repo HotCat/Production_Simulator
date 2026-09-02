@@ -1,5 +1,7 @@
 extends SceneTree
 
+const ProductScript = preload("res://scripts/h89_product.gd")
+
 func _initialize() -> void:
 	var scene: Node = load("res://fairino3_demo.tscn").instantiate()
 	root.add_child(scene)
@@ -10,6 +12,13 @@ func _initialize() -> void:
 	passed = passed and tcp != null and tcp.get_parent().name == "j6"
 	passed = passed and tcp.position.distance_to(Vector3(0.0, 0.0, 0.1)) < 0.000001
 	passed = passed and scene.get_node_or_null("TcpGizmo") != null
+	var gripper := robot.find_child("ParallelJawGripper", true, false)
+	var product := scene.get_node_or_null("H89CalibrationProduct")
+	passed = passed and gripper != null and product != null
+	passed = passed and ProductScript.WIDTH_M == 0.03795 and ProductScript.HEIGHT_M == 0.046 and ProductScript.THICKNESS_M == 0.004
+	if gripper != null:
+		passed = passed and gripper.get_meta("product_grip_mode", "") == "upright thin-side-wall"
+	passed = passed and product.get_meta("envelope_mm", "") == "37.95 x 46.00 x 4.00"
 	var recording_indicator := scene.get_node_or_null("UI/RecordingIndicator") as Label
 	var recording_idle_ok := recording_indicator != null and recording_indicator.text.contains("REC OFF")
 	scene.call("_on_recording_started", "/tmp/fairino3-test.mp4")
@@ -23,6 +32,13 @@ func _initialize() -> void:
 		passed = passed and scene.get_node_or_null("UI/AxisPanel/Margin/VBox/Axis%dRow/SpinBox" % (i + 1)) != null
 	for i in 3:
 		passed = passed and scene.get_node_or_null("UI/TranslationPanel/Margin/VBox/Translation%dRow/SpinBox" % i) != null
+	for toggle_name in ["StatusToggle", "JointToggle", "OrientationToggle", "TranslationToggle", "PickupToggle", "RecordingToggle"]:
+		passed = passed and scene.get_node_or_null("UI/OverlayToolbar/%s" % toggle_name) != null
+	scene.call("_on_translation_overlay_toggled", false)
+	var translation_hidden: bool = not scene.translation_panel.visible
+	scene.call("_on_translation_overlay_toggled", true)
+	var translation_shown: bool = scene.translation_panel.visible
+	passed = passed and translation_hidden and translation_shown
 	var initial_tcp := robot.get_tcp_world_position()
 	var translated_reachable: bool = robot.translate_tcp(Vector3(0.01, 0.0, 0.0), true)
 	var translated_tcp := robot.get_tcp_world_position()
@@ -68,6 +84,36 @@ func _initialize() -> void:
 	var aligned_normal_error := rad_to_deg(acos(clampf(flange_normal.dot(Vector3.DOWN), -1.0, 1.0)))
 	print("Fairino3 flange normal-to-world-minus-Y error deg=", aligned_normal_error, " normal=", flange_normal, " reachable=", scene.reachable, " q=", robot.get_joint_angles())
 	passed = passed and absf(flange_basis.z.dot(Vector3.DOWN) - 1.0) < 0.000001 and aligned_normal_error < 2.0
+	scene.call("_start_thin_side_pickup")
+	for _i in 600:
+		scene.call("_process", 0.05)
+	var pickup_gripper := robot.find_child("ParallelJawGripper", true, false)
+	var pickup_completed: bool = not scene.pickup_active and product.get_parent() == pickup_gripper
+	var product_orientation_preserved: bool = product.global_basis.is_equal_approx(scene.product_initial_basis)
+	var gripper_open_ok := false
+	var gripper_closed_ok := false
+	if pickup_gripper != null:
+		var left_jaw := pickup_gripper.get_node_or_null("Jaw_Left") as MeshInstance3D
+		var right_jaw := pickup_gripper.get_node_or_null("Jaw_Right") as MeshInstance3D
+		if left_jaw != null and right_jaw != null:
+			pickup_gripper.call("set_jaws_closed", false)
+			gripper_open_ok = absf((right_jaw.position.x - left_jaw.position.x) - 0.056) < 0.001
+			pickup_gripper.call("set_jaws_closed", true)
+			gripper_closed_ok = absf((right_jaw.position.x - left_jaw.position.x) - 0.04395) < 0.001
+			pickup_gripper.call("set_jaws_closed", false)
+	scene.call("reset_pickup")
+	var pickup_reset: bool = product.get_parent() == scene
+	print("Pickup test completed=", pickup_completed, " reset=", pickup_reset, " parent=", product.get_parent().name, " picked=", scene.product_picked, " step=", scene.pickup_step)
+	passed = passed and pickup_completed and pickup_reset and product_orientation_preserved and gripper_open_ok and gripper_closed_ok
+	scene.call("_start_long_side_pickup")
+	var long_gripper := robot.find_child("ParallelJawGripper", true, false) as Node3D
+	var long_side_rotation_ok := absf(long_gripper.rotation.z - PI * 0.5) < 0.001
+	long_gripper.call("set_jaws_closed", true)
+	var long_left_jaw := long_gripper.get_node("Jaw_Left") as MeshInstance3D
+	var long_right_jaw := long_gripper.get_node("Jaw_Right") as MeshInstance3D
+	var long_side_span_ok := absf((long_right_jaw.position.x - long_left_jaw.position.x) - 0.0105) < 0.001
+	scene.call("reset_pickup")
+	passed = passed and long_side_rotation_ok and long_side_span_ok
 	var recording_indicator_ok := recording_idle_ok and recording_active_ok and recording_finalizing_ok
 	if not recording_indicator_ok:
 		push_error("Fairino3 recording indicator integration verification failed")
