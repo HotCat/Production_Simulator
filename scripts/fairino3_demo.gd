@@ -10,10 +10,13 @@ const Parser = preload("res://scripts/trajectory_file_parser.gd")
 @onready var camera: EditorOrbitCamera = $Camera3D
 @onready var status: Label = $UI/Panel/Margin/VBox/Status
 @onready var pose_label: Label = $UI/Panel/Margin/VBox/Pose
+@onready var header_panel: PanelContainer = $UI/Panel
 @onready var axis_panel: PanelContainer = $UI/AxisPanel
+@onready var orientation_panel: PanelContainer = $UI/OrientationPanel
 @onready var tcp_gizmo: TcpGizmo = $TcpGizmo
 @onready var orientation_lock: CheckBox = $UI/OrientationPanel/Margin/VBox/LockOrientation
 @onready var pose_reachability: Label = $UI/OrientationPanel/Margin/VBox/PoseReachability
+@onready var recording_indicator: Label = $UI/RecordingIndicator
 
 var planner := Planner.new()
 var automatic := true
@@ -27,6 +30,8 @@ var axis_spins: Array[SpinBox] = []
 var orientation_spins: Array[SpinBox] = []
 var target_world_euler := Vector3.ZERO
 var updating_orientation_ui := false
+var runtime_recorder: Node
+var _pointer_over_ui := false
 
 const MANUAL_JOG_SPEED_MPS := 0.12
 const MANUAL_YAW_SPEED_RAD_S := 1.5
@@ -52,17 +57,29 @@ func _ready() -> void:
 	for i in 6:
 		var spin := get_node("UI/AxisPanel/Margin/VBox/Axis%dRow/SpinBox" % (i + 1)) as SpinBox
 		axis_spins.append(spin)
+		_configure_pose_spin(spin)
 		spin.value_changed.connect(_on_axis_value_changed.bind(i))
 	_sync_axis_controls()
 	for index in 3:
 		var spin := get_node("UI/OrientationPanel/Margin/VBox/Orientation%dRow/SpinBox" % index) as SpinBox
 		orientation_spins.append(spin)
+		_configure_pose_spin(spin)
 		spin.value_changed.connect(_on_orientation_value_changed.bind(index))
 	orientation_lock.toggled.connect(_on_orientation_lock_toggled)
 	$UI/OrientationPanel/Margin/VBox/Buttons/AlignWorld.pressed.connect(_on_align_world_pressed)
 	$UI/OrientationPanel/Margin/VBox/Buttons/CaptureCurrent.pressed.connect(_on_capture_current_pressed)
 	_sync_orientation_controls()
 	tcp_gizmo.target_dragged.connect(_on_tcp_gizmo_dragged)
+	# RuntimeRecorder is an autoload shared by both the MG400 and Fairino3
+	# scenes.  Connecting here keeps the Fairino3 standalone scene's status
+	# overlay in sync with the global F9/Ctrl+R recorder.
+	runtime_recorder = get_node_or_null("/root/RuntimeRecorder")
+	if runtime_recorder != null:
+		runtime_recorder.recording_started.connect(_on_recording_started)
+		runtime_recorder.recording_finalizing.connect(_on_recording_finalizing)
+		runtime_recorder.recording_stopped.connect(_on_recording_stopped)
+		runtime_recorder.recording_failed.connect(_on_recording_failed)
+	_set_recording_indicator("● REC OFF  ·  F9 to start", Color("9aa8b8"))
 	tcp_gizmo.global_position = robot.get_tcp_world_position()
 	_update_ui()
 
@@ -96,6 +113,23 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	# Move focus away from an edited SpinBox as soon as the pointer enters a UI
+	# panel. This makes the following click on a Button/CheckBox a normal first
+	# click instead of requiring one click to defocus and a second to activate.
+	if event is InputEventMouseMotion:
+		var motion := event as InputEventMouseMotion
+		var over_ui := _is_ui_bounding_box_hit(motion.position)
+		if over_ui and not _pointer_over_ui:
+			call_deferred("_release_pose_focus")
+		_pointer_over_ui = over_ui
+		return
+	if event is InputEventMouseButton:
+		var mouse := event as InputEventMouseButton
+		# Do not consume clicks inside any UI bounding box. The Control itself
+		# must receive the click so Align/Capture and the fields activate at once.
+		if mouse.pressed and mouse.button_index == MOUSE_BUTTON_LEFT and not _is_ui_bounding_box_hit(mouse.position):
+			call_deferred("_release_pose_focus")
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		var key := event as InputEventKey
 		if key.keycode == KEY_SPACE:
@@ -120,6 +154,37 @@ func _input(event: InputEvent) -> void:
 			target_position = robot.urdf_position_to_world(RESET_URDF_POSITION)
 			target_yaw = 0.0
 			get_viewport().set_input_as_handled()
+
+
+func _configure_pose_spin(spin: SpinBox) -> void:
+	if spin == null:
+		return
+	# Clicking a field still enables text entry, but arrows no longer move the
+	# focus rectangle between sibling controls after focus has been released.
+	spin.focus_mode = Control.FOCUS_CLICK
+	var line_edit := spin.get_line_edit()
+	if line_edit != null:
+		line_edit.focus_mode = Control.FOCUS_CLICK
+
+
+func _is_ui_bounding_box_hit(position: Vector2) -> bool:
+	# The panels are disjoint, so their rectangles provide an unambiguous
+	# pointer collision test without stealing input from the 3D viewport.
+	for panel in [header_panel, axis_panel, orientation_panel]:
+		if is_instance_valid(panel) and panel.get_global_rect().has_point(position):
+			return true
+	return false
+
+
+func _release_pose_focus() -> void:
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if focus_owner != null:
+		focus_owner.release_focus()
+	# Explicitly clear the viewport focus as well on Godot versions that expose
+	# this helper; the method guard keeps the project compatible across 4.x.
+	var viewport := get_viewport()
+	if viewport.has_method("gui_release_focus"):
+		viewport.call("gui_release_focus")
 
 
 func _update_manual_target(delta: float) -> void:
@@ -302,3 +367,39 @@ func _update_ui() -> void:
 	]
 	pose_reachability.text = "● POSE REACHABLE" if reachable else "● POSE CLAMPED / UNREACHABLE"
 	pose_reachability.modulate = Color("70e58a") if reachable else Color("ff796d")
+
+
+func _set_recording_indicator(text: String, color: Color) -> void:
+	if recording_indicator == null:
+		return
+	recording_indicator.text = text
+	recording_indicator.modulate = color
+
+
+func _on_recording_started(output_path: String) -> void:
+	_set_recording_indicator(
+		"● RECORDING  ·  F9 to stop\n%s" % output_path.get_file(),
+		Color("ff5f5f")
+	)
+
+
+func _on_recording_finalizing(output_path: String) -> void:
+	_set_recording_indicator(
+		"◐ FINALIZING VIDEO\n%s" % output_path.get_file(),
+		Color("ffc266")
+	)
+
+
+func _on_recording_stopped(output_path: String) -> void:
+	_set_recording_indicator(
+		"✓ VIDEO SAVED\nrecordings/%s" % output_path.get_file(),
+		Color("70e58a")
+	)
+	get_tree().create_timer(4.0).timeout.connect(func() -> void:
+		if runtime_recorder == null or (not runtime_recorder.is_recording and not runtime_recorder.is_finalizing):
+			_set_recording_indicator("● REC OFF  ·  F9 to start", Color("9aa8b8"))
+	)
+
+
+func _on_recording_failed(message: String) -> void:
+	_set_recording_indicator("✕ RECORDING ERROR\n%s" % message, Color("ff796d"))

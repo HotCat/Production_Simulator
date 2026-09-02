@@ -103,7 +103,8 @@ Generated image: `material/generated/mg400_production_line_blue_robot_render.png
 ### Runtime video recording
 
 The project includes the runtime recorder adapted from the locomotion tutorial.
-Press `F9` (or `Ctrl+R`) while the game is running to toggle capture. Frames are
+It is a global autoload, so it works in both `main.tscn` (MG400) and the
+standalone `fairino3_demo.tscn` scene. Press `F9` (or `Ctrl+R`) while the game is running to toggle capture. Frames are
 read back from the Godot viewport and streamed asynchronously to FFmpeg, so
 encoding and file I/O do not block the simulation loop. The default output is a
 1280 × 720 H.264 MP4 in the project’s `recordings/` directory. The in-game
@@ -249,6 +250,13 @@ X, green Y, or blue Z handle to move the requested Cartesian coordinate. Each
 drag pauses the trajectory, invokes the six-axis IK solver, and leaves the
 gizmo attached to the actual TCP. The panel reports `IK REACHABLE` for a valid
 target and `IK CLAMPED` when a drag exceeds the workspace.
+
+Pose-entry focus is mouse-scoped: click a Roll/Pitch/Yaw or J1–J6 field to
+edit it. As the pointer enters any UI panel, an edited field is automatically
+defocused; clicking `Align Flange to Base`, `Capture Current`, or another
+control therefore activates it on the first click. Click the 3D viewport to
+return to TCP navigation. Arrow keys and `R`/`F` then jog the TCP instead of
+changing the text field or moving the UI focus rectangle.
 
 ### Do you need ROS 2 / MoveIt 2?
 

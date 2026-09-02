@@ -10,6 +10,12 @@ func _initialize() -> void:
 	passed = passed and tcp != null and tcp.get_parent().name == "j6"
 	passed = passed and tcp.position.distance_to(Vector3(0.0, 0.0, 0.1)) < 0.000001
 	passed = passed and scene.get_node_or_null("TcpGizmo") != null
+	var recording_indicator := scene.get_node_or_null("UI/RecordingIndicator") as Label
+	var recording_idle_ok := recording_indicator != null and recording_indicator.text.contains("REC OFF")
+	scene.call("_on_recording_started", "/tmp/fairino3-test.mp4")
+	var recording_active_ok := recording_indicator != null and recording_indicator.text.contains("RECORDING")
+	scene.call("_on_recording_finalizing", "/tmp/fairino3-test.mp4")
+	var recording_finalizing_ok := recording_indicator != null and recording_indicator.text.contains("FINALIZING")
 	passed = passed and scene.get_node_or_null("UI/OrientationPanel/Margin/VBox/PoseReachability") != null
 	for i in 3:
 		passed = passed and scene.get_node_or_null("UI/OrientationPanel/Margin/VBox/Orientation%dRow/SpinBox" % i) != null
@@ -41,6 +47,10 @@ func _initialize() -> void:
 	var aligned_normal_error := rad_to_deg(acos(clampf(flange_normal.dot(Vector3.DOWN), -1.0, 1.0)))
 	print("Fairino3 flange normal-to-world-minus-Y error deg=", aligned_normal_error, " normal=", flange_normal, " reachable=", scene.reachable, " q=", robot.get_joint_angles())
 	passed = passed and absf(flange_basis.z.dot(Vector3.DOWN) - 1.0) < 0.000001 and aligned_normal_error < 2.0
+	var recording_indicator_ok := recording_idle_ok and recording_active_ok and recording_finalizing_ok
+	if not recording_indicator_ok:
+		push_error("Fairino3 recording indicator integration verification failed")
+		passed = false
 	if not passed:
 		push_error("Fairino3 numerical IK verification failed")
 		quit(1)
