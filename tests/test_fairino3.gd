@@ -34,6 +34,8 @@ func _initialize() -> void:
 		passed = passed and scene.get_node_or_null("UI/TranslationPanel/Margin/VBox/Translation%dRow/SpinBox" % i) != null
 	for toggle_name in ["StatusToggle", "JointToggle", "OrientationToggle", "TranslationToggle", "PickupToggle", "RecordingToggle"]:
 		passed = passed and scene.get_node_or_null("UI/OverlayToolbar/%s" % toggle_name) != null
+	for jog_row in ["RzRow", "RyRow", "RxRow"]:
+		passed = passed and scene.get_node_or_null("UI/PendantPanel/Margin/VBox/%s/SpinBox" % jog_row) != null
 	scene.call("_on_translation_overlay_toggled", false)
 	var translation_hidden: bool = not scene.translation_panel.visible
 	scene.call("_on_translation_overlay_toggled", true)
@@ -84,6 +86,28 @@ func _initialize() -> void:
 	var aligned_normal_error := rad_to_deg(acos(clampf(flange_normal.dot(Vector3.DOWN), -1.0, 1.0)))
 	print("Fairino3 flange normal-to-world-minus-Y error deg=", aligned_normal_error, " normal=", flange_normal, " reachable=", scene.reachable, " q=", robot.get_joint_angles())
 	passed = passed and absf(flange_basis.z.dot(Vector3.DOWN) - 1.0) < 0.000001 and aligned_normal_error < 2.0
+	# Pendant Base RX/RY/RZ jog rotates the flange through branch-preserving IK
+	# while holding the Cartesian TCP position fixed.
+	var pendant_position_before := robot.get_tcp_world_position()
+	var pendant_basis_before := robot.get_tcp_world_basis()
+	var ry_spin := scene.get_node("UI/PendantPanel/Margin/VBox/RyRow/SpinBox") as SpinBox
+	ry_spin.value = 10.0
+	var released_position := robot.get_tcp_world_position()
+	var released_basis := robot.get_tcp_world_basis()
+	scene.call("_process", 0.1)
+	var pendant_position_after := robot.get_tcp_world_position()
+	var pendant_rotation_delta := rad_to_deg((pendant_basis_before * released_basis.inverse()).get_rotation_quaternion().get_angle())
+	var pendant_position_delta := pendant_position_before.distance_to(pendant_position_after)
+	var release_position_delta := released_position.distance_to(pendant_position_after)
+	print("Fairino3 pendant Base RY jog position delta m=", pendant_position_delta, " rotation delta deg=", pendant_rotation_delta)
+	passed = passed and pendant_position_delta < 0.002 and release_position_delta < 0.0001 and pendant_rotation_delta > 2.0
+	var base_y_world := robot.base_axis_to_world(Vector3(0.0, 1.0, 0.0))
+	var base_axis_mapping_ok := (
+		robot.pendant_base_axis_to_world(0).distance_to(Vector3.RIGHT) < 0.0001
+		and base_y_world.distance_to(Vector3(0.0, 0.0, -1.0)) < 0.0001
+		and robot.pendant_base_axis_to_world(2).distance_to(Vector3.UP) < 0.0001
+	)
+	passed = passed and base_axis_mapping_ok
 	scene.call("_start_thin_side_pickup")
 	for _i in 600:
 		scene.call("_process", 0.05)

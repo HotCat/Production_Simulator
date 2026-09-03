@@ -143,6 +143,10 @@ text = "Pickup"
 button_pressed = true
 text = "Recording"
 
+[node name="PendantToggle" type="CheckBox" parent="UI/OverlayToolbar"]
+button_pressed = true
+text = "Pendant"
+
 [node name="RecordingIndicator" type="Label" parent="UI"]
 anchors_preset = 1
 anchor_left = 1.0
@@ -456,3 +460,92 @@ tooltip_text = "Rotate jaw axis around tool Z and approach the long side"
 [node name="ResetPickup" type="Button" parent="UI/PickupPanel/Margin/VBox"]
 size_flags_horizontal = 3
 text = "Reset pickup"
+
+[node name="PendantPanel" type="PanelContainer" parent="UI"]
+offset_left = 960.0
+offset_top = 174.0
+offset_right = 1260.0
+offset_bottom = 410.0
+theme_override_styles/panel = SubResource("PanelStyle")
+
+[node name="Margin" type="MarginContainer" parent="UI/PendantPanel"]
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 9
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 9
+
+[node name="VBox" type="VBoxContainer" parent="UI/PendantPanel/Margin"]
+theme_override_constants/separation = 6
+
+[node name="Title" type="Label" parent="UI/PendantPanel/Margin/VBox"]
+text = "PENDANT · CARTESIAN JOG (FLANGE)"
+theme_override_colors/font_color = Color(0.4, 0.84, 1, 1)
+theme_override_font_sizes/font_size = 14
+
+[node name="Hint" type="Label" parent="UI/PendantPanel/Margin/VBox"]
+text = "Base frame · adjust RX / RY / RZ"
+theme_override_colors/font_color = Color(0.72, 0.78, 0.86, 1)
+theme_override_font_sizes/font_size = 11
+
+[node name="FrameRow" type="HBoxContainer" parent="UI/PendantPanel/Margin/VBox"]
+theme_override_constants/separation = 4
+
+[node name="Base" type="Button" parent="UI/PendantPanel/Margin/VBox/FrameRow"]
+custom_minimum_size = Vector2(82, 28)
+text = "Base"
+modulate = Color(0.431, 0.784, 1, 1)
+
+[node name="Tool" type="Button" parent="UI/PendantPanel/Margin/VBox/FrameRow"]
+custom_minimum_size = Vector2(82, 28)
+text = "Tool"
+disabled = true
+
+[node name="Wobj" type="Button" parent="UI/PendantPanel/Margin/VBox/FrameRow"]
+custom_minimum_size = Vector2(82, 28)
+text = "Wobj"
+disabled = true
+
+[node name="RzRow" type="HBoxContainer" parent="UI/PendantPanel/Margin/VBox"]
+theme_override_constants/separation = 4
+
+[node name="Label" type="Label" parent="UI/PendantPanel/Margin/VBox/RzRow"]
+custom_minimum_size = Vector2(42, 0)
+text = "RZ"
+vertical_alignment = 1
+
+[node name="SpinBox" type="SpinBox" parent="UI/PendantPanel/Margin/VBox/RzRow"]
+size_flags_horizontal = 3
+min_value = -180.0
+max_value = 180.0
+step = 0.1
+suffix = "°"
+
+[node name="RyRow" type="HBoxContainer" parent="UI/PendantPanel/Margin/VBox"]
+theme_override_constants/separation = 4
+
+[node name="Label" type="Label" parent="UI/PendantPanel/Margin/VBox/RyRow"]
+custom_minimum_size = Vector2(42, 0)
+text = "RY"
+vertical_alignment = 1
+
+[node name="SpinBox" type="SpinBox" parent="UI/PendantPanel/Margin/VBox/RyRow"]
+size_flags_horizontal = 3
+min_value = -180.0
+max_value = 180.0
+step = 0.1
+suffix = "°"
+
+[node name="RxRow" type="HBoxContainer" parent="UI/PendantPanel/Margin/VBox"]
+theme_override_constants/separation = 4
+
+[node name="Label" type="Label" parent="UI/PendantPanel/Margin/VBox/RxRow"]
+custom_minimum_size = Vector2(42, 0)
+text = "RX"
+vertical_alignment = 1
+
+[node name="SpinBox" type="SpinBox" parent="UI/PendantPanel/Margin/VBox/RxRow"]
+size_flags_horizontal = 3
+min_value = -180.0
+max_value = 180.0
+step = 0.1
+suffix = "°"

@@ -26,6 +26,8 @@ const EPSILON := 0.0000001
 
 var _waypoints: Array[Vector3] = []
 var _yaw_waypoints: PackedFloat32Array = PackedFloat32Array()
+var _orientation_waypoints: Array[Vector3] = []
+var _joint_waypoints: Array[PackedFloat32Array] = []
 var _waypoint_events: Array[Array] = []
 var _trigger_events: Array[Dictionary] = []
 var _next_trigger_index := 0
@@ -43,6 +45,8 @@ var _phase_index := 0
 var _state := MotionState.IDLE
 var _current_position := Vector3.ZERO
 var _current_yaw := 0.0
+var _current_orientation := Vector3.ZERO
+var _current_joints := PackedFloat32Array()
 var _current_speed_mps := 0.0
 
 
@@ -51,13 +55,18 @@ var _current_speed_mps := 0.0
 ## `yaw_radians` is optional. When provided, it must contain one yaw for every
 ## coordinate and is interpolated along each linear segment using the shortest
 ## angular path.
+## `orientation_euler` and `joint_waypoints` are optional full-pose channels;
+## joint values are radians and are sampled from the same time/acceleration
+## profile as Cartesian position.
 func plan_world_path(
 	coordinates: Array[Vector3],
 	desired_speed_mm_s: float,
 	acceleration_mm_s2: float = 500.0,
 	junction_deviation_mm: float = 1.0,
 	yaw_radians: PackedFloat32Array = PackedFloat32Array(),
-	waypoint_events: Array = []
+	waypoint_events: Array = [],
+	orientation_euler: Array[Vector3] = [],
+	joint_waypoints: Array[PackedFloat32Array] = []
 ) -> bool:
 	_clear_plan()
 	if coordinates.size() < 2:
@@ -72,6 +81,12 @@ func plan_world_path(
 	if not waypoint_events.is_empty() and waypoint_events.size() != coordinates.size():
 		push_error("Waypoint event count must match coordinate count")
 		return false
+	if not orientation_euler.is_empty() and orientation_euler.size() != coordinates.size():
+		push_error("Orientation waypoint count must match coordinate count")
+		return false
+	if not joint_waypoints.is_empty() and joint_waypoints.size() != coordinates.size():
+		push_error("Joint waypoint count must match coordinate count")
+		return false
 
 	_feed_speed_mps = desired_speed_mm_s / 1000.0
 	_acceleration_mps2 = acceleration_mm_s2 / 1000.0
@@ -82,16 +97,24 @@ func plan_world_path(
 	# geometry rather than motion blocks.
 	_waypoints.append(coordinates[0])
 	_yaw_waypoints.append(yaw_radians[0] if not yaw_radians.is_empty() else 0.0)
+	_orientation_waypoints.append(orientation_euler[0] if not orientation_euler.is_empty() else Vector3(0.0, 0.0, _yaw_waypoints[0]))
+	_joint_waypoints.append(joint_waypoints[0].duplicate() if not joint_waypoints.is_empty() else PackedFloat32Array())
 	_waypoint_events.append(waypoint_events[0].duplicate(true) if not waypoint_events.is_empty() else [])
 	for index in range(1, coordinates.size()):
 		if coordinates[index].distance_to(_waypoints[-1]) <= EPSILON:
 			if not yaw_radians.is_empty():
 				_yaw_waypoints[_yaw_waypoints.size() - 1] = yaw_radians[index]
+			if not orientation_euler.is_empty():
+				_orientation_waypoints[_orientation_waypoints.size() - 1] = orientation_euler[index]
+			if not joint_waypoints.is_empty():
+				_joint_waypoints[_joint_waypoints.size() - 1] = joint_waypoints[index].duplicate()
 			if not waypoint_events.is_empty():
 				_waypoint_events[_waypoint_events.size() - 1].append_array(waypoint_events[index].duplicate(true))
 			continue
 		_waypoints.append(coordinates[index])
 		_yaw_waypoints.append(yaw_radians[index] if not yaw_radians.is_empty() else 0.0)
+		_orientation_waypoints.append(orientation_euler[index] if not orientation_euler.is_empty() else Vector3(0.0, 0.0, _yaw_waypoints[-1]))
+		_joint_waypoints.append(joint_waypoints[index].duplicate() if not joint_waypoints.is_empty() else PackedFloat32Array())
 		_waypoint_events.append(waypoint_events[index].duplicate(true) if not waypoint_events.is_empty() else [])
 
 	if _waypoints.size() < 2:
@@ -104,6 +127,8 @@ func plan_world_path(
 	_build_motion_phases()
 	_current_position = _waypoints[0]
 	_current_yaw = _yaw_waypoints[0]
+	_current_orientation = _orientation_waypoints[0]
+	_current_joints = _joint_waypoints[0].duplicate()
 	_state = MotionState.IDLE
 	return not _phases.is_empty()
 
@@ -149,6 +174,8 @@ func advance(delta: float) -> Dictionary:
 	if _elapsed_seconds >= _total_seconds - EPSILON:
 		_current_position = _waypoints[-1]
 		_current_yaw = _yaw_waypoints[-1]
+		_current_orientation = _orientation_waypoints[-1]
+		_current_joints = _joint_waypoints[-1].duplicate()
 		_current_speed_mps = 0.0
 		_state = MotionState.COMPLETED
 		trajectory_completed.emit()
@@ -165,6 +192,8 @@ func get_current_pose() -> Dictionary:
 	return {
 		"position": _current_position,
 		"yaw": _current_yaw,
+		"orientation": _current_orientation,
+		"joints": _current_joints,
 		"speed_mps": _current_speed_mps,
 		"elapsed_seconds": _elapsed_seconds,
 		"total_seconds": _total_seconds,
@@ -234,6 +263,8 @@ func get_boundary_speed_mm_s(boundary_index: int) -> float:
 func _clear_plan() -> void:
 	_waypoints.clear()
 	_yaw_waypoints = PackedFloat32Array()
+	_orientation_waypoints.clear()
+	_joint_waypoints.clear()
 	_segment_lengths = PackedFloat32Array()
 	_segment_directions.clear()
 	_boundary_speeds = PackedFloat32Array()
@@ -399,6 +430,8 @@ func _sample_at_elapsed_time() -> void:
 		var hold_waypoint: int = int(phase.waypoint)
 		_current_position = _waypoints[hold_waypoint]
 		_current_yaw = _yaw_waypoints[hold_waypoint]
+		_current_orientation = _orientation_waypoints[hold_waypoint]
+		_current_joints = _joint_waypoints[hold_waypoint].duplicate()
 		_current_speed_mps = 0.0
 		return
 	var local_time: float = clampf(
@@ -417,6 +450,19 @@ func _sample_at_elapsed_time() -> void:
 	var interpolation := clampf(distance / _segment_lengths[segment], 0.0, 1.0)
 	_current_position = _waypoints[segment].lerp(_waypoints[segment + 1], interpolation)
 	_current_yaw = lerp_angle(_yaw_waypoints[segment], _yaw_waypoints[segment + 1], interpolation)
+	var from_orientation := _orientation_waypoints[segment]
+	var to_orientation := _orientation_waypoints[segment + 1]
+	_current_orientation = Vector3(
+		lerp_angle(from_orientation.x, to_orientation.x, interpolation),
+		lerp_angle(from_orientation.y, to_orientation.y, interpolation),
+		lerp_angle(from_orientation.z, to_orientation.z, interpolation)
+	)
+	if not _joint_waypoints[segment].is_empty() and _joint_waypoints[segment].size() == _joint_waypoints[segment + 1].size():
+		_current_joints.resize(_joint_waypoints[segment].size())
+		for joint_index in _current_joints.size():
+			_current_joints[joint_index] = lerp_angle(_joint_waypoints[segment][joint_index], _joint_waypoints[segment + 1][joint_index], interpolation)
+	else:
+		_current_joints = PackedFloat32Array()
 	_current_speed_mps = maxf(start_speed + acceleration * local_time, 0.0)
 
 

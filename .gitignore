@@ -16,6 +16,9 @@
 # Local planning notes may contain credentials and are never project assets.
 myplans.txt
 
+# Ephemeral command handoff used by the Emacs .traj2 upload command.
+.runtime/
+
 # Incidental development captures that are not simulator source assets.
 /截屏*.png
 /截屏*.png.import

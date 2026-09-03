@@ -4,6 +4,7 @@ extends Node3D
 
 const Planner = preload("res://scripts/cartesian_trajectory_planner.gd")
 const Parser = preload("res://scripts/trajectory_file_parser.gd")
+const Parser2 = preload("res://scripts/trajectory2_file_parser.gd")
 
 @onready var robot: Fairino3Robot = $Fairino3Robot
 @onready var target_marker: MeshInstance3D = $TargetMarker
@@ -15,6 +16,7 @@ const Parser = preload("res://scripts/trajectory_file_parser.gd")
 @onready var orientation_panel: PanelContainer = $UI/OrientationPanel
 @onready var translation_panel: PanelContainer = $UI/TranslationPanel
 @onready var pickup_panel: PanelContainer = $UI/PickupPanel
+@onready var pendant_panel: PanelContainer = $UI/PendantPanel
 @onready var calibration_product: Node3D = $H89CalibrationProduct
 @onready var overlay_toolbar: HBoxContainer = $UI/OverlayToolbar
 @onready var overlay_toggles: Array[CheckBox] = [
@@ -24,6 +26,7 @@ const Parser = preload("res://scripts/trajectory_file_parser.gd")
 	$UI/OverlayToolbar/TranslationToggle,
 	$UI/OverlayToolbar/PickupToggle,
 	$UI/OverlayToolbar/RecordingToggle,
+	$UI/OverlayToolbar/PendantToggle,
 ]
 @onready var tcp_gizmo: TcpGizmo = $TcpGizmo
 @onready var orientation_lock: CheckBox = $UI/OrientationPanel/Margin/VBox/LockOrientation
@@ -67,6 +70,19 @@ var pickup_grasp_commanded := false
 var pickup_waiting_for_grasp := false
 var pickup_jaw_closing := false
 var pickup_jaw_close_elapsed := 0.0
+var pendant_jog_frame := "Base"
+var pendant_jog_position := Vector3.ZERO
+var pendant_base_angles := Vector3.ZERO
+var updating_pendant_ui := false
+var pendant_base_basis := Basis.IDENTITY
+var trajectory2_active := false
+var trajectory2_path := ""
+var trajectory2_mtime := 0
+var trajectory2_command_signature := 0
+var trajectory2_poll_elapsed := 0.0
+var pending_trajectory2_path := ""
+var runtime_pose_publish_elapsed := 0.0
+var resume_trajectory2_after_pickup := false
 
 const PICKUP_JAW_CLOSE_TIME_S := 0.22
 const PICKUP_POSITION_TOLERANCE_M := 0.002
@@ -95,7 +111,9 @@ func _ready() -> void:
 		world_points.append(robot.urdf_position_to_world(p))
 	planner.plan_world_path(world_points, 100.0, 500.0, 1.0)
 	planner.start()
+	planner.trajectory_triggered.connect(_on_trajectory2_triggered)
 	_load_command_line_trajectory()
+	_load_command_line_trajectory2()
 	robot.target_reachability_changed.connect(_on_reachability_changed)
 	for i in 6:
 		var spin := get_node("UI/AxisPanel/Margin/VBox/Axis%dRow/SpinBox" % (i + 1)) as SpinBox
@@ -123,12 +141,21 @@ func _ready() -> void:
 	$UI/PickupPanel/Margin/VBox/Buttons/ThinSide.pressed.connect(_start_thin_side_pickup)
 	$UI/PickupPanel/Margin/VBox/Buttons/LongSide.pressed.connect(_start_long_side_pickup)
 	$UI/PickupPanel/Margin/VBox/ResetPickup.pressed.connect(reset_pickup)
+	_on_pendant_frame_selected("Base")
+	for row_name in ["RzRow", "RyRow", "RxRow"]:
+		var row := get_node("UI/PendantPanel/Margin/VBox/%s" % row_name)
+		var axis_index := 2 if row_name == "RzRow" else (1 if row_name == "RyRow" else 0)
+		var spin := row.get_node("SpinBox") as SpinBox
+		_configure_pose_spin(spin)
+		spin.value_changed.connect(_on_pendant_axis_value_changed.bind(axis_index))
+	_capture_pendant_base_pose()
 	overlay_toggles[0].toggled.connect(_on_status_overlay_toggled)
 	overlay_toggles[1].toggled.connect(_on_joint_overlay_toggled)
 	overlay_toggles[2].toggled.connect(_on_orientation_overlay_toggled)
 	overlay_toggles[3].toggled.connect(_on_translation_overlay_toggled)
 	overlay_toggles[4].toggled.connect(_on_pickup_overlay_toggled)
 	overlay_toggles[5].toggled.connect(_on_recording_overlay_toggled)
+	overlay_toggles[6].toggled.connect(_on_pendant_overlay_toggled)
 	reset_pickup()
 	tcp_gizmo.target_dragged.connect(_on_tcp_gizmo_dragged)
 	# RuntimeRecorder is an autoload shared by both the MG400 and Fairino3
@@ -146,14 +173,52 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	_poll_runtime_trajectory2(delta)
+	# A physical jog command takes control immediately, even if an uploaded
+	# trajectory is currently playing. This prevents the target marker from
+	# moving without the arm when the operator starts pressing an arrow/R/F key.
+	if automatic and not pickup_active and _manual_jog_requested():
+		automatic = false
+		axis_override = false
+		planner.pause()
 	if pickup_active:
 		_process_pickup(delta)
+		if not pickup_active and not pending_trajectory2_path.is_empty():
+			var queued_path := pending_trajectory2_path
+			pending_trajectory2_path = ""
+			_apply_trajectory2(queued_path)
+		elif not pickup_active and resume_trajectory2_after_pickup:
+			resume_trajectory2_after_pickup = false
+			automatic = true
+			axis_override = false
+			if planner.get_state() == Planner.MotionState.PAUSED:
+				planner.resume()
 	elif automatic:
 		var pose: Dictionary = planner.advance(delta)
 		target_position = pose.position
 		base_target_position = target_position
 		target_yaw = pose.yaw
-		if orientation_lock.button_pressed:
+		if trajectory2_active and automatic:
+			var planned_joints: PackedFloat32Array = pose.get("joints", PackedFloat32Array()) as PackedFloat32Array
+			if not planned_joints.is_empty():
+				# A traj2 waypoint carries the desired FR3 branch explicitly. Apply
+				# the interpolated J1-J6 pose directly; do not run a second IK solve
+				# that could jump to another branch.
+				var requested_position: Vector3 = target_position
+				robot.set_joint_angles_target(planned_joints, true)
+				target_position = robot.get_tcp_world_position()
+				target_world_euler = robot.get_tcp_world_basis().get_euler()
+				# The explicit J1-J6 values are authoritative for the physical
+				# branch. FR3 pendant Euler reporting has a different wrist
+				# convention than Godot's Basis Euler decomposition, so do not mark
+				# a valid joint pose unreachable merely because those representations
+				# differ by a wrist-frame convention. Cartesian XYZ still verifies
+				# that the supplied pose and joint configuration agree.
+				reachable = robot.get_tcp_world_position().distance_to(requested_position) < 0.003
+			else:
+				target_world_euler = pose.get("orientation", target_world_euler) as Vector3
+			orientation_lock.button_pressed = true
+		elif orientation_lock.button_pressed:
 			target_world_euler.y = target_yaw
 		if planner.is_completed() and loop_trajectory:
 			planner.start()
@@ -162,7 +227,11 @@ func _process(delta: float) -> void:
 			_update_manual_target(delta)
 		base_target_position = target_position
 	if not axis_override and not pickup_active:
-		if orientation_lock.button_pressed:
+		if trajectory2_active and automatic:
+			# Joint-bearing traj2 poses were already applied above. Keeping this
+			# branch free of Cartesian IK preserves the commanded J1-J6 trajectory.
+			pass
+		elif orientation_lock.button_pressed:
 			reachable = robot.set_tcp_target_pose_world(
 				target_position, Basis.from_euler(target_world_euler)
 			)
@@ -176,6 +245,14 @@ func _process(delta: float) -> void:
 	_sync_orientation_controls()
 	_update_ui()
 	_update_pickup_ui()
+	_publish_runtime_pose(delta)
+
+
+func _manual_jog_requested() -> bool:
+	return Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_RIGHT) \
+		or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_DOWN) \
+		or Input.is_key_pressed(KEY_R) or Input.is_key_pressed(KEY_F) \
+		or Input.is_key_pressed(KEY_PAGEUP) or Input.is_key_pressed(KEY_PAGEDOWN)
 
 
 func _start_thin_side_pickup() -> void:
@@ -196,6 +273,7 @@ func _start_pickup(strategy: String, jaw_rotation: Vector3) -> void:
 	pickup_waiting_for_grasp = false
 	pickup_jaw_closing = false
 	pickup_jaw_close_elapsed = 0.0
+	resume_trajectory2_after_pickup = false
 	automatic = false
 	axis_override = true
 	planner.pause()
@@ -279,6 +357,22 @@ func _on_pickup_triggered(key: String) -> void:
 	pickup_planner.pause()
 
 
+func _on_trajectory2_triggered(key: String) -> void:
+	# .traj2 trigger commands share the simulator's physical-control keys.  W/E
+	# expose or hide the carried label; Q is intentionally accepted as a
+	# synchronization trigger for programs shared with the MG400 conveyor.
+	match key.to_lower():
+		"w": robot.set_product_label_visible(true)
+		"e": robot.set_product_label_visible(false)
+		"pickup_thin_side":
+			_start_thin_side_pickup()
+			resume_trajectory2_after_pickup = true
+		"pickup_long_side":
+			_start_long_side_pickup()
+			resume_trajectory2_after_pickup = true
+		"q": pass
+
+
 func _attach_product_to_gripper() -> void:
 	if product_picked or calibration_product == null or gripper == null:
 		return
@@ -298,6 +392,7 @@ func _attach_product_to_gripper() -> void:
 
 func reset_pickup() -> void:
 	pickup_active = false
+	resume_trajectory2_after_pickup = false
 	pickup_planner.stop()
 	pickup_grasp_commanded = false
 	pickup_waiting_for_grasp = false
@@ -321,6 +416,51 @@ func _update_pickup_ui() -> void:
 		return
 	var state := "READY" if pickup_step < 0 else ("PLACED" if pickup_step >= 4 else ("AT GRASP · CLOSING" if pickup_jaw_closing else ("WAITING FOR GRASP" if pickup_waiting_for_grasp else "PICKING")))
 	$UI/PickupPanel/Margin/VBox/State.text = "State: %s  ·  %s" % [state, pickup_strategy]
+
+
+func _on_pendant_frame_selected(frame_name: String) -> void:
+	pendant_jog_frame = frame_name
+	for name in ["Base", "Tool", "Wobj"]:
+		var button := get_node_or_null("UI/PendantPanel/Margin/VBox/FrameRow/%s" % name) as Button
+		if button != null:
+			button.modulate = Color("6ec8ff") if name == pendant_jog_frame else Color.WHITE
+			button.disabled = name != "Base"
+	pendant_jog_frame = "Base"
+
+
+func _capture_pendant_base_pose() -> void:
+	pendant_base_basis = robot.get_tcp_world_basis()
+	pendant_base_angles = Vector3.ZERO
+	updating_pendant_ui = true
+	for row_name in ["RxRow", "RyRow", "RzRow"]:
+		var spin := get_node_or_null("UI/PendantPanel/Margin/VBox/%s/SpinBox" % row_name) as SpinBox
+		if spin != null:
+			spin.value = 0.0
+	updating_pendant_ui = false
+
+
+func _on_pendant_axis_value_changed(value: float, axis_index: int) -> void:
+	if updating_pendant_ui or pickup_active:
+		return
+	var previous_value := pendant_base_angles[axis_index]
+	pendant_base_angles[axis_index] = value
+	var delta := deg_to_rad(value - previous_value)
+	# Pendant Base RX/RY/RZ always use the fixed FR3 base axes, never the
+	# current TCP axes: RX=Base-X, RY=Base-Y, RZ=Base-Z.
+	var world_axis := robot.pendant_base_axis_to_world(axis_index)
+	var target_basis := Basis(Quaternion(world_axis, delta)) * robot.get_tcp_world_basis()
+	pendant_jog_position = robot.get_tcp_world_position()
+	target_position = pendant_jog_position
+	base_target_position = pendant_jog_position
+	automatic = false
+	axis_override = true
+	planner.pause()
+	# Base pendant flange jog is deliberately separate from TCP orientation and
+	# keeps the current Cartesian position as the IK target.
+	reachable = robot.set_base_jog_pose_world(pendant_jog_position, target_basis, true)
+	pendant_base_basis = target_basis
+	target_world_euler = target_basis.get_euler()
+	target_yaw = target_world_euler.y
 
 
 func _input(event: InputEvent) -> void:
@@ -386,7 +526,7 @@ func _configure_pose_spin(spin: SpinBox) -> void:
 func _is_ui_bounding_box_hit(position: Vector2) -> bool:
 	# The panels are disjoint, so their rectangles provide an unambiguous
 	# pointer collision test without stealing input from the 3D viewport.
-	for panel in [overlay_toolbar, header_panel, axis_panel, orientation_panel, translation_panel, pickup_panel]:
+	for panel in [overlay_toolbar, header_panel, axis_panel, orientation_panel, translation_panel, pickup_panel, pendant_panel]:
 		if is_instance_valid(panel) and panel.get_global_rect().has_point(position):
 			return true
 	return false
@@ -414,6 +554,10 @@ func _on_pickup_overlay_toggled(visible: bool) -> void:
 
 func _on_recording_overlay_toggled(visible: bool) -> void:
 	recording_indicator.visible = visible
+
+
+func _on_pendant_overlay_toggled(visible: bool) -> void:
+	pendant_panel.visible = visible
 
 
 func _release_pose_focus() -> void:
@@ -597,6 +741,126 @@ func _load_command_line_trajectory() -> void:
 	if planner.plan_world_path(world_points, parsed.feed_mm_s, parsed.acceleration_mm_s2, parsed.junction_deviation_mm, yaws, parsed.get("waypoint_events", [])):
 		planner.start()
 		loop_trajectory = parsed.loop
+		trajectory2_active = false
+
+
+func _load_command_line_trajectory2() -> void:
+	var args := OS.get_cmdline_user_args()
+	var path := ""
+	for i in args.size():
+		if args[i].begins_with("--trajectory2="):
+			path = args[i].substr("--trajectory2=".length())
+		elif args[i] == "--trajectory2" and i + 1 < args.size():
+			path = args[i + 1]
+	if not path.is_empty():
+		_apply_trajectory2(path)
+
+
+func _poll_runtime_trajectory2(delta: float) -> void:
+	trajectory2_poll_elapsed += delta
+	if trajectory2_poll_elapsed < 0.25:
+		return
+	trajectory2_poll_elapsed = 0.0
+	var command_path := ProjectSettings.globalize_path("res://.runtime/trajectory2.command")
+	if not FileAccess.file_exists(command_path):
+		return
+	var command_file := FileAccess.open(command_path, FileAccess.READ)
+	if command_file == null:
+		return
+	var command_text := command_file.get_as_text()
+	var requested := command_text.get_slice("\n", 0).strip_edges()
+	if requested.is_empty():
+		return
+	var modified := FileAccess.get_modified_time(requested) if FileAccess.file_exists(requested) else 0
+	var command_signature := hash(command_text)
+	if requested == trajectory2_path and modified == trajectory2_mtime and command_signature == trajectory2_command_signature:
+		return
+	if pickup_active:
+		pending_trajectory2_path = requested
+		trajectory2_command_signature = command_signature
+		return
+	_apply_trajectory2(requested)
+	trajectory2_command_signature = command_signature
+
+
+func _apply_trajectory2(path: String) -> bool:
+	var parsed: Dictionary = Parser2.parse_file(path)
+	if not parsed.get("ok", false):
+		status.text = "TRAJECTORY2 ERROR\n%s" % parsed.get("error", "unknown error")
+		return false
+	var world_points: Array[Vector3] = []
+	var world_orientations: Array[Vector3] = []
+	var joint_waypoints: Array[PackedFloat32Array] = []
+	var yaw_radians := PackedFloat32Array()
+	var pitches: PackedFloat32Array = parsed["pitch_degrees"]
+	var rolls: PackedFloat32Array = parsed["roll_degrees"]
+	var yaws: PackedFloat32Array = parsed["yaw_degrees"]
+	for i in parsed.coordinates_mm.size():
+		world_points.append(robot.urdf_position_to_world(parsed.coordinates_mm[i] / 1000.0))
+		var ros_basis := Basis.from_euler(Vector3(deg_to_rad(rolls[i]), deg_to_rad(pitches[i]), deg_to_rad(yaws[i])))
+		world_orientations.append(robot.urdf_basis_to_world(ros_basis).get_euler())
+		yaw_radians.append(deg_to_rad(yaws[i]))
+		var joint_radians := PackedFloat32Array()
+		for joint_degrees in parsed.joint_degrees[i]:
+			joint_radians.append(deg_to_rad(joint_degrees))
+		joint_waypoints.append(joint_radians)
+	if not planner.plan_world_path(world_points, parsed.feed_mm_s, parsed.acceleration_mm_s2,
+		parsed.junction_deviation_mm, yaw_radians, parsed.get("waypoint_events", []), world_orientations, joint_waypoints):
+		return false
+	planner.start()
+	loop_trajectory = parsed.loop
+	trajectory2_active = true
+	automatic = true
+	axis_override = false
+	trajectory2_path = path
+	trajectory2_mtime = FileAccess.get_modified_time(path) if FileAccess.file_exists(path) else 0
+	_apply_overlay_settings(parsed.get("overlays", {}))
+	status.text = "TRAJECTORY2 LOADED  ·  %s" % path.get_file()
+	return true
+
+
+func _apply_overlay_settings(settings: Dictionary) -> void:
+	var values := [settings.get("status", true), settings.get("joints", true),
+		settings.get("orientation", settings.get("pose", true)),
+		settings.get("translation", settings.get("tcp_offset", true)),
+		settings.get("pickup", true), settings.get("recording", true), settings.get("pendant", true)]
+	for i in values.size():
+		var toggle := overlay_toggles[i]
+		if toggle.button_pressed != bool(values[i]):
+			toggle.set_pressed_no_signal(bool(values[i]))
+		match i:
+			0: _on_status_overlay_toggled(bool(values[i]))
+			1: _on_joint_overlay_toggled(bool(values[i]))
+			2: _on_orientation_overlay_toggled(bool(values[i]))
+			3: _on_translation_overlay_toggled(bool(values[i]))
+			4: _on_pickup_overlay_toggled(bool(values[i]))
+			5: _on_recording_overlay_toggled(bool(values[i]))
+			6: _on_pendant_overlay_toggled(bool(values[i]))
+
+
+func _publish_runtime_pose(delta: float) -> void:
+	# Publish at a modest rate: this file is an editor handoff snapshot, not a
+	# high-frequency telemetry stream. Emacs C-c C-p reads the latest complete
+	# line and appends it as a waypoint.
+	runtime_pose_publish_elapsed += delta
+	if runtime_pose_publish_elapsed < 0.20 or robot == null:
+		return
+	runtime_pose_publish_elapsed = 0.0
+	var directory := ProjectSettings.globalize_path("res://.runtime")
+	DirAccess.make_dir_recursive_absolute(directory)
+	var path := directory.path_join("trajectory2.pose")
+	var position := robot.get_tcp_urdf_position() * 1000.0
+	var ros_euler := robot.world_basis_to_urdf(robot.get_tcp_world_basis()).get_euler()
+	var joints := robot.get_joint_angles()
+	var fields := [position.x, position.y, position.z, rad_to_deg(ros_euler.y), rad_to_deg(ros_euler.x), rad_to_deg(ros_euler.z)]
+	for joint in joints:
+		fields.append(rad_to_deg(joint))
+	var values := ""
+	for index in fields.size():
+		values += (" " if index > 0 else "") + ("%.4f" % fields[index])
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file != null:
+		file.store_string("# Live FR3 pose: X Y Z Pitch Roll Yaw J1 J2 J3 J4 J5 J6\n" + values + "\n")
 
 
 func _on_reachability_changed(value: bool) -> void:

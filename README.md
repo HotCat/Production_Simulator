@@ -298,6 +298,14 @@ work surface. The dedicated pose indicator remains
 green only when both position and orientation converge within tolerance. An
 XYZ may be position-reachable but pose-unreachable because the requested wrist
 orientation encounters a joint limit; move the TCP gizmo slightly and retry.
+The Fairino pendant panel currently implements the manual's **Base** Cartesian
+flange jog using RX/RY/RZ SpinBox controls styled like the orientation panel.
+Changing RX, RY, or RZ applies an incremental rotation around the corresponding
+robot-base axis while keeping TCP X/Y/Z latched. The SpinBox arrows support
+press-and-hold adjustment. Tool and Wobj frames remain visibly reserved for a
+later extension. Pendant rotation is disabled while the deterministic pickup
+sequence owns the Cartesian target, so product attachment is unaffected.
+
 For production-grade collision-aware planning, use MoveIt to generate the
 joint path and replay it in this scene.
 
@@ -628,4 +636,43 @@ Rebuild and verify:
 
 /Applications/Godot.app/Contents/MacOS/Godot \
   --headless --path . --script tests/test_hikrobot_gs200_bracket.gd
+```
+
+## Fairino3 `.traj2` programs and Emacs control
+
+`tools/emacs/mg400-traj2-mode.el` provides a major mode for six-axis FR3
+Cartesian programs. It is loaded automatically for files ending in `.traj2`
+and follows the requested format: positions are ROS/FR3 X Y Z in millimetres,
+followed by Pitch, Roll, Yaw and explicit J1-J6 joint angles in degrees. The
+planner interpolates both channels on the same time profile, and execution
+uses the supplied joints to preserve the requested IK branch. The optional
+`[overlays]` section
+controls each Fairino3 screen panel (`status`, `joints`, `orientation` or
+`pose`, `translation` or `tcp_offset`, `pickup`, `recording`, and `pendant`).
+
+Useful bindings:
+
+- `C-c C-v` validates the document and requires exactly twelve waypoint numbers
+  (`X Y Z Pitch Roll Yaw J1 J2 J3 J4 J5 J6`).
+- `C-c C-r` launches Godot with the file using `--trajectory2=...`.
+- `C-c C-u` saves and uploads it to a running Fairino3 scene.
+- `C-c C-p` captures the current live FR3 pose (XYZ/Pitch/Roll/Yaw + J1–J6)
+  and appends it to `[waypoints]`.
+- `C-c C-i` inserts a complete 12-field waypoint; `C-c C-s` saves.
+
+Load the mode from Emacs with `(load "/Users/hotcat/zhouyu/MG400/tools/emacs/mg400-traj2-mode.el")`,
+or add `tools/emacs` to your `load-path` in your init file.
+
+Runtime upload writes the absolute path to the ignored `.runtime/trajectory2.command`
+handoff file. Fairino3 polls that file every 250 ms, reparses the program,
+applies its overlay settings, and starts the new full-pose LinuxCNC-style
+trajectory. Uploads received during the protected pickup sequence are deferred
+until the pickup completes. Waypoint `delay <seconds>` and `trigger <key>`
+commands remain available and are emitted at the corresponding waypoint.
+
+Example launch:
+
+```sh
+/Applications/Godot.app/Contents/MacOS/Godot \
+  --path . -- --trajectory2=/absolute/path/program.traj2
 ```

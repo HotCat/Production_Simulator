@@ -104,11 +104,31 @@ func set_tcp_target_pose_world(
 	world_basis: Basis,
 	immediate := false
 ) -> bool:
+	return _set_pose_target_world(world_position, world_basis, immediate, false)
+
+
+## Pendant Cartesian jog variant. It solves the requested flange pose while
+## preserving the current joint branch, so a small RX/RY/RZ jog cannot reseed
+## the arm into a different elbow/wrist configuration.
+func set_base_jog_pose_world(
+	world_position: Vector3,
+	world_basis: Basis,
+	immediate := true
+) -> bool:
+	return _set_pose_target_world(world_position, world_basis, immediate, true)
+
+
+func _set_pose_target_world(
+	world_position: Vector3,
+	world_basis: Basis,
+	immediate: bool,
+	preserve_current_branch: bool
+) -> bool:
 	var target_local_position := _urdf_root.to_local(world_position)
 	var target_local_basis := (
 		_urdf_root.global_basis.inverse() * world_basis
 	).orthonormalized()
-	var solved := _solve_pose_ik(target_local_position, target_local_basis)
+	var solved := _solve_pose_ik(target_local_position, target_local_basis, preserve_current_branch)
 	_target_angles = solved
 	var current_angles := _joint_angles.duplicate()
 	apply_joint_angles(solved)
@@ -133,6 +153,21 @@ func get_tcp_world_position() -> Vector3:
 
 func get_tcp_world_basis() -> Basis:
 	return _tcp.global_basis.orthonormalized()
+
+
+## Converts a unit axis from the Fairino/URDF base frame into Godot world
+## coordinates. The URDF is Z-up, while the scene is Y-up, so this conversion
+## is required for pendant Base RX/RY/RZ jogs.
+func base_axis_to_world(axis: Vector3) -> Vector3:
+	return (_urdf_root.global_basis * axis).normalized()
+
+
+## Returns the fixed FR3 Base-frame axis used by pendant RX/RY/RZ. The
+## argument is 0=RX/Base-X, 1=RY/Base-Y, 2=RZ/Base-Z. Because the URDF base is
+## ROS Z-up and the scene is Godot Y-up, these become world +X, -Z, and +Y.
+func pendant_base_axis_to_world(axis_index: int) -> Vector3:
+	var axis := Vector3.RIGHT if axis_index == 0 else (Vector3.UP if axis_index == 1 else Vector3.BACK)
+	return base_axis_to_world(axis)
 
 
 func get_flange_world_position() -> Vector3:
@@ -178,6 +213,17 @@ func translate_tcp(offset: Vector3, immediate := false) -> bool:
 
 func urdf_position_to_world(position_m: Vector3) -> Vector3:
 	return _urdf_root.to_global(position_m)
+
+
+## Converts an orientation expressed in the FR3/ROS Z-up frame to Godot's
+## world frame. This is the rotational counterpart to urdf_position_to_world().
+func urdf_basis_to_world(basis: Basis) -> Basis:
+	return (_urdf_root.global_basis * basis).orthonormalized()
+
+
+## Converts a Godot world orientation into the FR3/ROS Z-up basis.
+func world_basis_to_urdf(basis: Basis) -> Basis:
+	return (_urdf_root.global_basis.inverse() * basis).orthonormalized()
 
 
 func get_tcp_urdf_position() -> Vector3:
@@ -231,7 +277,7 @@ func _solve_position_ik(target_local: Vector3) -> PackedFloat32Array:
 	return solved
 
 
-func _solve_pose_ik(target_position: Vector3, target_basis: Basis) -> PackedFloat32Array:
+func _solve_pose_ik(target_position: Vector3, target_basis: Basis, preserve_current_branch := false) -> PackedFloat32Array:
 	# For a downward-facing request, start from a known FR3 operating branch;
 	# otherwise preserve the current configuration for smooth pose edits.
 	var downward_seed := PackedFloat32Array([
@@ -240,11 +286,14 @@ func _solve_pose_ik(target_position: Vector3, target_basis: Basis) -> PackedFloa
 	])
 	# The solver receives the target basis in ROS/URDF coordinates. World -Y
 	# becomes URDF -Z through the Z-up → Y-up conversion.
-	var solved := downward_seed if target_basis.z.z < -0.7 else _joint_angles.duplicate()
+	var solved := _joint_angles.duplicate() if preserve_current_branch else (downward_seed if target_basis.z.z < -0.7 else _joint_angles.duplicate())
 	# Quaternion angle extraction loses useful precision below roughly 0.001
 	# radians with Godot's float transforms, so use a one-centiradian probe.
 	var probe_delta := 0.01
-	var position_weight := 25.0
+	# Pendant orientation jogs must hold XYZ tightly while still converging the
+	# requested rotation. The normal pose solver keeps a softer balance for
+	# general IK, whereas the branch-preserving jog path prioritizes position.
+	var position_weight := 500.0 if preserve_current_branch else 25.0
 	for iteration in maxi(ik_iterations * 8, 240):
 		# Alternating the sweep direction reduces branch bias near a singularity.
 		var joint_order := range(5, -1, -1) if iteration % 2 == 0 else range(0, 6)
