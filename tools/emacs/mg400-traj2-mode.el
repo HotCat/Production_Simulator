@@ -24,7 +24,7 @@
     ("^[[:space:]]*\\([[:alpha:]_][[:alnum:]_]*\\)[[:space:]]*=" (1 font-lock-variable-name-face))
     (,(concat "\\_<" mg400-traj2--number "\\_>") . font-lock-constant-face)
     ("\\_<\\(?:true\\|false\\|yes\\|no\\|fr3-mm\\)\\_>" . font-lock-builtin-face)
-    ("^[[:space:]]*\\_<\\(?:delay\\|trigger\\|thin\\|long\\)\\_>" . font-lock-keyword-face)
+    ("^[[:space:]]*\\_<\\(?:delay\\|trigger\\|thin\\|long\\|return\\)\\_>" . font-lock-keyword-face)
     ("^\\s-*#.*$" . font-lock-comment-face)))
 
 (defun mg400-traj2--error (line message)
@@ -83,6 +83,10 @@
                ((and (= (length fields) 2)
                      (equal command "long") (equal (downcase (nth 1 fields)) "side"))
                 (unless (> waypoints 0) (mg400-traj2--error line-number "long side needs a preceding waypoint"))
+                (setq events (1+ events)))
+               ((and (= (length fields) 2)
+                     (equal command "return") (equal (downcase (nth 1 fields)) "product"))
+                (unless (> waypoints 0) (mg400-traj2--error line-number "return product needs a preceding waypoint"))
                 (setq events (1+ events)))
                (t
                 (unless (= (length fields) 12) (mg400-traj2--error line-number "waypoint needs exactly X Y Z Pitch Roll Yaw J1 J2 J3 J4 J5 J6"))
