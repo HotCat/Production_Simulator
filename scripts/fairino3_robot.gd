@@ -293,8 +293,11 @@ func _solve_pose_ik(target_position: Vector3, target_basis: Basis, preserve_curr
 	# Pendant orientation jogs must hold XYZ tightly while still converging the
 	# requested rotation. The normal pose solver keeps a softer balance for
 	# general IK, whereas the branch-preserving jog path prioritizes position.
-	var position_weight := 500.0 if preserve_current_branch else 25.0
-	for iteration in maxi(ik_iterations * 8, 240):
+	# Base-frame RX/RY/RZ are rotations about the fixed TCP origin. Use a strong
+	# positional weight and extra iterations for this path; ordinary Cartesian
+	# pose IK keeps the lighter weighting and iteration budget.
+	var position_weight := 10000.0 if preserve_current_branch else 25.0
+	for iteration in maxi(ik_iterations * (16 if preserve_current_branch else 8), 480 if preserve_current_branch else 240):
 		# Alternating the sweep direction reduces branch bias near a singularity.
 		var joint_order := range(5, -1, -1) if iteration % 2 == 0 else range(0, 6)
 		for joint in joint_order:
@@ -305,7 +308,10 @@ func _solve_pose_ik(target_position: Vector3, target_basis: Basis, preserve_curr
 			).orthonormalized()
 			var position_error := target_position - current_position
 			var orientation_error := _rotation_vector(current_basis, target_basis)
-			if position_error.length() < 0.0005 and orientation_error.length() < deg_to_rad(0.25):
+			# Normal pose requests can exit as soon as both errors are small.
+			# Pendant requests continue to the projection pass so even a tiny
+			# rotation is corrected back onto its exact fixed Cartesian point.
+			if not preserve_current_branch and position_error.length() < 0.0005 and orientation_error.length() < deg_to_rad(0.25):
 				return solved
 			var probe := solved.duplicate()
 			probe[joint] += probe_delta
@@ -331,6 +337,29 @@ func _solve_pose_ik(target_position: Vector3, target_basis: Basis, preserve_curr
 				JOINT_LIMITS[joint].x,
 				JOINT_LIMITS[joint].y
 			)
+	# Project the result onto the requested TCP position using only the first
+	# three (base/elbow) joints. This removes the sub-millimetre translation
+	# coupled into the flange offset by a wrist rotation, while leaving J4-J6
+	# unchanged and preserving the user's orientation adjustment.
+	if preserve_current_branch:
+		for correction in 80:
+			apply_joint_angles(solved)
+			var current_position := _urdf_root.to_local(_tcp.global_position)
+			var position_error := target_position - current_position
+			if position_error.length() < 0.00001:
+				break
+			for joint in range(2, -1, -1):
+				apply_joint_angles(solved)
+				current_position = _urdf_root.to_local(_tcp.global_position)
+				var probe := solved.duplicate()
+				probe[joint] += 0.001
+				apply_joint_angles(probe)
+				var probe_position := _urdf_root.to_local(_tcp.global_position)
+				var derivative := (probe_position - current_position) / 0.001
+				apply_joint_angles(solved)
+				var denominator := derivative.length_squared() + 0.000001
+				var step := clampf(derivative.dot(position_error) / denominator * 0.75, -0.08, 0.08)
+				solved[joint] = clampf(solved[joint] + step, JOINT_LIMITS[joint].x, JOINT_LIMITS[joint].y)
 	apply_joint_angles(solved)
 	return solved
 
