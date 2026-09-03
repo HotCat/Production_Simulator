@@ -285,10 +285,10 @@ func _start_return_product() -> void:
 	planner.pause()
 	# The gripper's current global basis includes the unchanged jaw orientation.
 	# Inverse the same seating offset used by _attach_product_to_gripper().
-	var original_product_position := product_initial_parent.to_global(product_initial_transform.origin)
+	var original_product_position: Vector3 = product_initial_parent.to_global(product_initial_transform.origin) as Vector3
 	# Attachment seats the product center at grasp_center + (0,-23,0), so undo
 	# that seating offset when choosing the return grasp pose.
-	var grasp_center := original_product_position + Vector3(0.0, 0.023, 0.0)
+	var grasp_center: Vector3 = original_product_position + Vector3(0.0, 0.023, 0.0)
 	var current_tcp := robot.get_tcp_world_position()
 	var current_tool_axis := gripper.global_basis * Vector3(0.0, 0.0, 0.130)
 	return_grasp_position = grasp_center - current_tool_axis
@@ -333,7 +333,7 @@ func _release_product_at_original_pose() -> void:
 	calibration_product.reparent(product_initial_parent, false)
 	calibration_product.transform = product_initial_transform
 	product_picked = false
-pickup_step = -1
+	pickup_step = -1
 
 
 func _on_return_completed() -> void:
