@@ -88,6 +88,9 @@ var return_active := false
 var return_release_elapsed := 0.0
 var return_approach_position := Vector3.ZERO
 var return_grasp_position := Vector3.ZERO
+var return_target_basis := Basis.IDENTITY
+var last_pickup_grasp_position := Vector3.ZERO
+var last_pickup_basis := Basis.IDENTITY
 
 const PICKUP_JAW_CLOSE_TIME_S := 0.22
 const PICKUP_POSITION_TOLERANCE_M := 0.002
@@ -283,15 +286,12 @@ func _start_return_product() -> void:
 	automatic = false
 	axis_override = true
 	planner.pause()
-	# The gripper's current global basis includes the unchanged jaw orientation.
-	# Inverse the same seating offset used by _attach_product_to_gripper().
-	var original_product_position: Vector3 = product_initial_parent.to_global(product_initial_transform.origin) as Vector3
-	# Attachment seats the product center at grasp_center + (0,-23,0), so undo
-	# that seating offset when choosing the return grasp pose.
-	var grasp_center: Vector3 = original_product_position + Vector3(0.0, 0.023, 0.0)
+	# Reuse the exact TCP grasp pose captured by the pickup routine. This is the
+	# geometric inverse of the approach and avoids deriving a new IK target from
+	# the robot's production-time wrist pose.
+	return_target_basis = last_pickup_basis
 	var current_tcp := robot.get_tcp_world_position()
-	var current_tool_axis := gripper.global_basis * Vector3(0.0, 0.0, 0.130)
-	return_grasp_position = grasp_center - current_tool_axis
+	return_grasp_position = last_pickup_grasp_position
 	return_approach_position = return_grasp_position + Vector3(0.0, 0.050, 0.0)
 	var points: Array[Vector3] = [current_tcp, return_approach_position, return_grasp_position]
 	return_planner.plan_world_path(points, 80.0, 300.0, 1.0)
@@ -302,9 +302,8 @@ func _start_return_product() -> void:
 func _process_return_product(delta: float) -> void:
 	var pose: Dictionary = return_planner.advance(delta)
 	var commanded_position: Vector3 = pose.get("position", robot.get_tcp_world_position()) as Vector3
-	# Use the current orientation throughout the return; no jaw rotation or
-	# strategy change is applied while travelling to the original pickup pose.
-	robot.set_tcp_target_pose_world(commanded_position, robot.get_tcp_world_basis())
+	# Keep the pickup flange orientation and local jaw rotation unchanged.
+	robot.set_tcp_target_pose_world(commanded_position, return_target_basis)
 	if return_planner.is_completed():
 		if return_release_elapsed <= 0.0:
 			if gripper != null:
@@ -372,6 +371,8 @@ func _start_pickup(strategy: String, jaw_rotation: Vector3) -> void:
 	var grasp := product_origin - tool_basis * Vector3(0.0, 0.0, 0.130) + Vector3(0.0, 0.023, 0.0)
 	var approach := grasp + Vector3(0.0, 0.050, 0.0)
 	pickup_grasp_position = grasp
+	last_pickup_grasp_position = grasp
+	last_pickup_basis = pickup_flange_basis
 	var place := Vector3(0.40, 0.30, 0.16)
 	var points: Array[Vector3] = [robot.get_tcp_world_position(), approach, grasp, approach, place]
 	pickup_points_total_length = 0.0
