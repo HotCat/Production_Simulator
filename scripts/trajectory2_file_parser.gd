@@ -106,6 +106,8 @@ static func parse_text(text: String, source_name: String = "trajectory2") -> Dic
 				pickup_command = "pickup_thin_side"
 			elif values.size() == 2 and values[0].to_lower() == "long" and values[1].to_lower() == "side":
 				pickup_command = "pickup_long_side"
+			elif values.size() == 2 and values[0].to_lower() == "return" and values[1].to_lower() == "product":
+				pickup_command = "return_product"
 			if not pickup_command.is_empty():
 				if events.is_empty():
 					return _error("%s:%d: pickup command needs a preceding waypoint" % [source_name, line_number])

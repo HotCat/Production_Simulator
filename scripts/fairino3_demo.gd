@@ -35,6 +35,7 @@ const Parser2 = preload("res://scripts/trajectory2_file_parser.gd")
 
 var planner := Planner.new()
 var pickup_planner := Planner.new()
+var return_planner := Planner.new()
 var automatic := true
 var loop_trajectory := true
 var target_position := Vector3.ZERO
@@ -83,6 +84,10 @@ var trajectory2_poll_elapsed := 0.0
 var pending_trajectory2_path := ""
 var runtime_pose_publish_elapsed := 0.0
 var resume_trajectory2_after_pickup := false
+var return_active := false
+var return_release_elapsed := 0.0
+var return_approach_position := Vector3.ZERO
+var return_grasp_position := Vector3.ZERO
 
 const PICKUP_JAW_CLOSE_TIME_S := 0.22
 const PICKUP_POSITION_TOLERANCE_M := 0.002
@@ -138,6 +143,7 @@ func _ready() -> void:
 	_sync_translation_controls()
 	gripper = robot.find_child("ParallelJawGripper", true, false) as Node3D
 	pickup_planner.trajectory_triggered.connect(_on_pickup_triggered)
+	return_planner.trajectory_completed.connect(_on_return_completed)
 	$UI/PickupPanel/Margin/VBox/Buttons/ThinSide.pressed.connect(_start_thin_side_pickup)
 	$UI/PickupPanel/Margin/VBox/Buttons/LongSide.pressed.connect(_start_long_side_pickup)
 	$UI/PickupPanel/Margin/VBox/ResetPickup.pressed.connect(reset_pickup)
@@ -193,6 +199,8 @@ func _process(delta: float) -> void:
 			axis_override = false
 			if planner.get_state() == Planner.MotionState.PAUSED:
 				planner.resume()
+	elif return_active:
+		_process_return_product(delta)
 	elif automatic:
 		var pose: Dictionary = planner.advance(delta)
 		target_position = pose.position
@@ -261,6 +269,77 @@ func _start_thin_side_pickup() -> void:
 
 func _start_long_side_pickup() -> void:
 	_start_pickup("long side wall", Vector3(0.0, 0.0, PI * 0.5))
+
+
+## Starts the inverse of a pickup: keep the current jaw rotation/span, move the
+## carried product back to its saved conveyor pose, open the jaws, and release
+## it without snapping it to a new production location.
+func _start_return_product() -> void:
+	if return_active or not product_picked or calibration_product == null or gripper == null:
+		return
+	return_active = true
+	return_release_elapsed = 0.0
+	resume_trajectory2_after_pickup = trajectory2_active
+	automatic = false
+	axis_override = true
+	planner.pause()
+	# The gripper's current global basis includes the unchanged jaw orientation.
+	# Inverse the same seating offset used by _attach_product_to_gripper().
+	var original_product_position := product_initial_parent.to_global(product_initial_transform.origin)
+	# Attachment seats the product center at grasp_center + (0,-23,0), so undo
+	# that seating offset when choosing the return grasp pose.
+	var grasp_center := original_product_position + Vector3(0.0, 0.023, 0.0)
+	var current_tcp := robot.get_tcp_world_position()
+	var current_tool_axis := gripper.global_basis * Vector3(0.0, 0.0, 0.130)
+	return_grasp_position = grasp_center - current_tool_axis
+	return_approach_position = return_grasp_position + Vector3(0.0, 0.050, 0.0)
+	var points: Array[Vector3] = [current_tcp, return_approach_position, return_grasp_position]
+	return_planner.plan_world_path(points, 80.0, 300.0, 1.0)
+	return_planner.start()
+	_update_pickup_ui()
+
+
+func _process_return_product(delta: float) -> void:
+	var pose: Dictionary = return_planner.advance(delta)
+	var commanded_position: Vector3 = pose.get("position", robot.get_tcp_world_position()) as Vector3
+	# Use the current orientation throughout the return; no jaw rotation or
+	# strategy change is applied while travelling to the original pickup pose.
+	robot.set_tcp_target_pose_world(commanded_position, robot.get_tcp_world_basis())
+	if return_planner.is_completed():
+		if return_release_elapsed <= 0.0:
+			if gripper != null:
+				gripper.call("set_jaws_closed", false)
+			return_release_elapsed = PICKUP_JAW_CLOSE_TIME_S
+		else:
+			return_release_elapsed -= delta
+			if return_release_elapsed <= 0.0:
+				_release_product_at_original_pose()
+				return_active = false
+				axis_override = true
+				if resume_trajectory2_after_pickup:
+					resume_trajectory2_after_pickup = false
+					automatic = true
+					axis_override = false
+					if planner.get_state() == Planner.MotionState.PAUSED:
+						planner.resume()
+				_update_pickup_ui()
+	target_position = commanded_position
+	base_target_position = target_position
+
+
+func _release_product_at_original_pose() -> void:
+	if calibration_product == null or product_initial_parent == null:
+		return
+	calibration_product.reparent(product_initial_parent, false)
+	calibration_product.transform = product_initial_transform
+	product_picked = false
+pickup_step = -1
+
+
+func _on_return_completed() -> void:
+	# Release is intentionally handled in _process_return_product after a short
+	# dwell at the exact grasp pose, so the jaws visibly open before reparenting.
+	pass
 
 
 func _start_pickup(strategy: String, jaw_rotation: Vector3) -> void:
@@ -370,6 +449,8 @@ func _on_trajectory2_triggered(key: String) -> void:
 		"pickup_long_side":
 			_start_long_side_pickup()
 			resume_trajectory2_after_pickup = true
+		"return_product":
+			_start_return_product()
 		"q": pass
 
 
@@ -392,6 +473,8 @@ func _attach_product_to_gripper() -> void:
 
 func reset_pickup() -> void:
 	pickup_active = false
+	return_active = false
+	return_planner.stop()
 	resume_trajectory2_after_pickup = false
 	pickup_planner.stop()
 	pickup_grasp_commanded = false
@@ -414,7 +497,7 @@ func reset_pickup() -> void:
 func _update_pickup_ui() -> void:
 	if pickup_panel == null:
 		return
-	var state := "READY" if pickup_step < 0 else ("PLACED" if pickup_step >= 4 else ("AT GRASP · CLOSING" if pickup_jaw_closing else ("WAITING FOR GRASP" if pickup_waiting_for_grasp else "PICKING")))
+	var state := "RETURNING TO PICKUP" if return_active else ("READY" if pickup_step < 0 else ("PLACED" if pickup_step >= 4 else ("AT GRASP · CLOSING" if pickup_jaw_closing else ("WAITING FOR GRASP" if pickup_waiting_for_grasp else "PICKING"))))
 	$UI/PickupPanel/Margin/VBox/State.text = "State: %s  ·  %s" % [state, pickup_strategy]
 
 
