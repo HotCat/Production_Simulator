@@ -99,6 +99,8 @@ const PICKUP_ORIENTATION_TOLERANCE_RAD := 0.035
 const MANUAL_JOG_SPEED_MPS := 0.12
 const MANUAL_YAW_SPEED_RAD_S := 1.5
 const RESET_URDF_POSITION := Vector3(0.22, 0.0, 0.30)
+const LABEL_FIXTURE_TCP_URDF_MM := Vector3(346.407, -213.059, 529.029)
+const LABEL_FIXTURE_TCP_RPY_DEG := Vector3(86.167, 32.259, -93.233) # pitch, roll, yaw
 
 
 func _ready() -> void:
@@ -145,6 +147,17 @@ func _ready() -> void:
 	_sync_orientation_controls()
 	_sync_translation_controls()
 	gripper = robot.find_child("ParallelJawGripper", true, false) as Node3D
+	var label_fixture := get_node_or_null("LabelApplicationFixture") as LabelApplicationFixture
+	if label_fixture != null:
+		# Match the uploaded flat-placement TCP pose. Traj2 stores Pitch/Roll/Yaw;
+		# Basis.from_euler receives Godot's XYZ order, i.e. Roll/Pitch/Yaw here.
+		var fixture_ros_basis := Basis.from_euler(Vector3(
+			deg_to_rad(LABEL_FIXTURE_TCP_RPY_DEG.y),
+			deg_to_rad(LABEL_FIXTURE_TCP_RPY_DEG.x),
+			deg_to_rad(LABEL_FIXTURE_TCP_RPY_DEG.z)))
+		label_fixture.set_flat_tcp_reference(
+			robot.urdf_position_to_world(LABEL_FIXTURE_TCP_URDF_MM / 1000.0),
+			robot.urdf_basis_to_world(fixture_ros_basis))
 	pickup_planner.trajectory_triggered.connect(_on_pickup_triggered)
 	return_planner.trajectory_completed.connect(_on_return_completed)
 	$UI/PickupPanel/Margin/VBox/Buttons/ThinSide.pressed.connect(_start_thin_side_pickup)
