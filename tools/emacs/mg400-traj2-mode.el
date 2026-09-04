@@ -66,11 +66,11 @@
                     (mg400-traj2--bool value line-number))
                 (if (equal section "pickup")
                     (progn
-                      (unless (equal key "dock")
+                      (unless (member key '("dock" "return_dock"))
                         (mg400-traj2--error line-number (format "unknown pickup parameter %s" key)))
                       (let ((dock-fields (split-string (replace-regexp-in-string "," " " value) "[[:space:]]+" t)))
                         (unless (= (length dock-fields) 12)
-                          (mg400-traj2--error line-number "dock needs exactly 12 numeric fields"))
+                          (mg400-traj2--error line-number (format "%s needs exactly 12 numeric fields" key)))
                         (mapc (lambda (x) (mg400-traj2--number x line-number)) dock-fields)))
                   (cond
                  ((equal key "units") (unless (equal (downcase value) "fr3-mm") (mg400-traj2--error line-number "units must be fr3-mm")))

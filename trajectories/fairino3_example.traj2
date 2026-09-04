@@ -11,6 +11,8 @@ loop = false
 [pickup]
 # Dock pose used before Long side / Thin side pickup. Units: FR3 mm/degrees.
 dock = 261.204 -120.215 321.356 -179.719 -0.441 -0.838 -4.093 -75.083 -102.208 -93.021 90.420 85.069
+# Robot dock after return product releases the part at its original pose.
+return_dock = 261.204 -120.215 321.356 -179.719 -0.441 -0.838 -4.093 -75.083 -102.208 -93.021 90.420 85.069
 
 [overlays]
 status = false

@@ -94,6 +94,11 @@ var return_release_elapsed := 0.0
 var return_approach_position := Vector3.ZERO
 var return_grasp_position := Vector3.ZERO
 var return_target_basis := Basis.IDENTITY
+var return_dock_position := Vector3.ZERO
+var return_dock_basis := Basis.IDENTITY
+var return_dock_joints := PackedFloat32Array()
+var return_dock_configured := false
+var return_departing := false
 var last_pickup_grasp_position := Vector3.ZERO
 var last_pickup_basis := Basis.IDENTITY
 
@@ -302,6 +307,7 @@ func _start_return_product() -> void:
 	if return_active or not product_picked or calibration_product == null or gripper == null:
 		return
 	return_active = true
+	return_departing = false
 	return_release_elapsed = 0.0
 	resume_trajectory2_after_pickup = trajectory2_active
 	automatic = false
@@ -323,10 +329,20 @@ func _start_return_product() -> void:
 func _process_return_product(delta: float) -> void:
 	var pose: Dictionary = return_planner.advance(delta)
 	var commanded_position: Vector3 = pose.get("position", robot.get_tcp_world_position()) as Vector3
-	# Keep the pickup flange orientation and local jaw rotation unchanged.
-	robot.set_tcp_target_pose_world(commanded_position, return_target_basis)
+	var planned_joints: PackedFloat32Array = pose.get("joints", PackedFloat32Array()) as PackedFloat32Array
+	if return_departing and not planned_joints.is_empty():
+		# return_dock carries an explicit branch; follow its interpolated joints just
+		# like normal traj2 playback instead of resolving that pose through IK.
+		robot.set_joint_angles_target(planned_joints, true)
+		commanded_position = robot.get_tcp_world_position()
+	else:
+		# Keep the pickup flange orientation and local jaw rotation unchanged while
+		# returning the product to its original placement pose.
+		robot.set_tcp_target_pose_world(commanded_position, return_target_basis)
 	if return_planner.is_completed():
-		if return_release_elapsed <= 0.0:
+		if return_departing:
+			_finish_return_product()
+		elif return_release_elapsed <= 0.0:
 			if gripper != null:
 				gripper.call("set_jaws_closed", false)
 			return_release_elapsed = PICKUP_JAW_CLOSE_TIME_S
@@ -334,17 +350,36 @@ func _process_return_product(delta: float) -> void:
 			return_release_elapsed -= delta
 			if return_release_elapsed <= 0.0:
 				_release_product_at_original_pose()
-				return_active = false
-				axis_override = true
-				if resume_trajectory2_after_pickup:
-					resume_trajectory2_after_pickup = false
-					automatic = true
-					axis_override = false
-					if planner.get_state() == Planner.MotionState.PAUSED:
-						planner.resume()
-				_update_pickup_ui()
+				if return_dock_configured:
+					_start_return_departure()
+				else:
+					_finish_return_product()
 	target_position = commanded_position
 	base_target_position = target_position
+
+
+func _start_return_departure() -> void:
+	return_departing = true
+	return_release_elapsed = 0.0
+	var points: Array[Vector3] = [robot.get_tcp_world_position(), return_dock_position]
+	var orientations: Array[Vector3] = [robot.get_tcp_world_basis().get_euler(), return_dock_basis.get_euler()]
+	var joints: Array[PackedFloat32Array] = [robot.get_joint_angles(), return_dock_joints]
+	return_planner.plan_world_path(points, 80.0, 300.0, 1.0,
+		PackedFloat32Array(), [[], []], orientations, joints)
+	return_planner.start()
+
+
+func _finish_return_product() -> void:
+	return_active = false
+	return_departing = false
+	axis_override = true
+	if resume_trajectory2_after_pickup:
+		resume_trajectory2_after_pickup = false
+		automatic = true
+		axis_override = false
+		if planner.get_state() == Planner.MotionState.PAUSED:
+			planner.resume()
+	_update_pickup_ui()
 
 
 func _release_product_at_original_pose() -> void:
@@ -517,6 +552,7 @@ func _attach_product_to_gripper() -> void:
 func reset_pickup() -> void:
 	pickup_active = false
 	return_active = false
+	return_departing = false
 	return_planner.stop()
 	resume_trajectory2_after_pickup = false
 	pickup_planner.stop()
@@ -983,6 +1019,19 @@ func _apply_trajectory2(path: String) -> bool:
 		pickup_dock_position = robot.urdf_position_to_world(Vector3(parsed_dock[0], parsed_dock[1], parsed_dock[2]) / 1000.0)
 		dock_ros_basis = Basis.from_euler(Vector3(deg_to_rad(parsed_dock[4]), deg_to_rad(parsed_dock[3]), deg_to_rad(parsed_dock[5])))
 		pickup_dock_basis = robot.urdf_basis_to_world(dock_ros_basis)
+	return_dock_configured = false
+	return_dock_joints = PackedFloat32Array()
+	var parsed_return_dock: PackedFloat32Array = parsed.get("return_dock", PackedFloat32Array()) as PackedFloat32Array
+	if parsed_return_dock.size() == 12:
+		return_dock_position = robot.urdf_position_to_world(Vector3(
+			parsed_return_dock[0], parsed_return_dock[1], parsed_return_dock[2]) / 1000.0)
+		var return_dock_ros_basis := Basis.from_euler(Vector3(
+			deg_to_rad(parsed_return_dock[4]), deg_to_rad(parsed_return_dock[3]),
+			deg_to_rad(parsed_return_dock[5])))
+		return_dock_basis = robot.urdf_basis_to_world(return_dock_ros_basis)
+		for index in 6:
+			return_dock_joints.append(deg_to_rad(parsed_return_dock[6 + index]))
+		return_dock_configured = true
 	for i in parsed.coordinates_mm.size():
 		world_points.append(robot.urdf_position_to_world(parsed.coordinates_mm[i] / 1000.0))
 		var ros_basis := Basis.from_euler(Vector3(deg_to_rad(rolls[i]), deg_to_rad(pitches[i]), deg_to_rad(yaws[i])))

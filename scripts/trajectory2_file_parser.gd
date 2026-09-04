@@ -35,6 +35,7 @@ static func parse_text(text: String, source_name: String = "trajectory2") -> Dic
 	var events: Array[Array] = []
 	var overlays: Dictionary = DEFAULT_OVERLAYS.duplicate(true)
 	var pickup_dock: PackedFloat32Array = PackedFloat32Array()
+	var return_dock: PackedFloat32Array = PackedFloat32Array()
 	var line_number := 0
 
 	for raw_line in text.split("\n"):
@@ -64,17 +65,21 @@ static func parse_text(text: String, source_name: String = "trajectory2") -> Dic
 				overlays[canonical] = parsed_bool
 				continue
 			if section == "pickup":
-				if key != "dock":
+				if key not in ["dock", "return_dock"]:
 					return _error("%s:%d: unknown pickup parameter %s" % [source_name, line_number, key])
 				var dock_fields := value.replace(",", " ").split(" ", false)
 				if dock_fields.size() != 12:
-					return _error("%s:%d: dock needs exactly X Y Z Pitch Roll Yaw J1 J2 J3 J4 J5 J6" % [source_name, line_number])
-				pickup_dock = PackedFloat32Array()
+					return _error("%s:%d: %s needs exactly X Y Z Pitch Roll Yaw J1 J2 J3 J4 J5 J6" % [source_name, line_number, key])
+				var parsed_pose := PackedFloat32Array()
 				for dock_field in dock_fields:
 					var dock_number := _parse_number(dock_field.strip_edges())
 					if is_nan(dock_number):
-						return _error("%s:%d: dock contains a non-numeric value" % [source_name, line_number])
-					pickup_dock.append(dock_number)
+						return _error("%s:%d: %s contains a non-numeric value" % [source_name, line_number, key])
+					parsed_pose.append(dock_number)
+				if key == "dock":
+					pickup_dock = parsed_pose
+				else:
+					return_dock = parsed_pose
 				continue
 			match key:
 				"feed_mm_s":
@@ -148,6 +153,7 @@ static func parse_text(text: String, source_name: String = "trajectory2") -> Dic
 		"junction_deviation_mm": junction, "loop": loop, "coordinates_mm": coordinates,
 		"pitch_degrees": pitch, "roll_degrees": roll, "yaw_degrees": yaw,
 		"joint_degrees": joint_degrees, "pickup_dock": pickup_dock,
+		"return_dock": return_dock,
 		"waypoint_events": events, "overlays": overlays}
 
 static func _parse_number(value: String) -> float:
