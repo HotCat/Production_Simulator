@@ -14,7 +14,9 @@ func _initialize() -> void:
 	passed = passed and scene.get_node_or_null("TcpGizmo") != null
 	var gripper := robot.find_child("ParallelJawGripper", true, false)
 	var product := scene.get_node_or_null("H89CalibrationProduct")
+	var label_fixture := scene.get_node_or_null("LabelApplicationFixture")
 	passed = passed and gripper != null and product != null
+	passed = passed and label_fixture != null and label_fixture.get_meta("open_edge", "") == "+Z gripper access"
 	passed = passed and ProductScript.WIDTH_M == 0.03795 and ProductScript.HEIGHT_M == 0.046 and ProductScript.THICKNESS_M == 0.004
 	if gripper != null:
 		passed = passed and gripper.get_meta("product_grip_mode", "") == "upright thin-side-wall"
