@@ -487,12 +487,11 @@ func _on_trajectory2_triggered(key: String) -> void:
 		"e": robot.set_product_label_visible(false)
 		"pickup_thin_side":
 			_start_thin_side_pickup()
-			# Pickup commands are terminal for this run; leave the robot at the
-			# pickup/place result instead of continuing the remaining waypoints.
-			resume_trajectory2_after_pickup = false
+			# Continue the uploaded program after the pickup/place sequence.
+			resume_trajectory2_after_pickup = true
 		"pickup_long_side":
 			_start_long_side_pickup()
-			resume_trajectory2_after_pickup = false
+			resume_trajectory2_after_pickup = true
 		"return_product":
 			_start_return_product()
 		"q": pass
