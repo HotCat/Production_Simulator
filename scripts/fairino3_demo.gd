@@ -484,10 +484,12 @@ func _on_trajectory2_triggered(key: String) -> void:
 		"e": robot.set_product_label_visible(false)
 		"pickup_thin_side":
 			_start_thin_side_pickup()
-			resume_trajectory2_after_pickup = true
+			# Pickup commands are terminal for this run; leave the robot at the
+			# pickup/place result instead of continuing the remaining waypoints.
+			resume_trajectory2_after_pickup = false
 		"pickup_long_side":
 			_start_long_side_pickup()
-			resume_trajectory2_after_pickup = true
+			resume_trajectory2_after_pickup = false
 		"return_product":
 			_start_return_product()
 		"q": pass
@@ -1009,6 +1011,37 @@ func _apply_trajectory2(path: String) -> bool:
 					world_orientations[waypoint_index] = pickup_dock_basis.get_euler()
 					yaw_radians[waypoint_index] = deg_to_rad(parsed_dock[5] if parsed_dock.size() == 12 else DEFAULT_PICKUP_DOCK_RPY_DEG.z)
 					joint_waypoints[waypoint_index] = dock_joints.duplicate()
+	# Older programs often leave a legacy/home waypoint before the pickup
+	# command. Do not execute that prefix as a separate motion block. Start from
+	# the robot's live pose and smoothly travel to the first pickup-trigger
+	# waypoint (which was rewritten to the configured dock above).
+	var first_pickup_index := -1
+	var all_events: Array = parsed.get("waypoint_events", [])
+	for waypoint_index in all_events.size():
+		for event in all_events[waypoint_index]:
+			var event_key := str(event.get("key", "")).to_lower()
+			if event_key in ["pickup_long_side", "pickup_thin_side"]:
+				first_pickup_index = waypoint_index
+				break
+		if first_pickup_index >= 0:
+			break
+	if first_pickup_index > 0:
+		var trimmed_points: Array[Vector3] = [robot.get_tcp_world_position()]
+		var trimmed_orientations: Array[Vector3] = [robot.get_tcp_world_basis().get_euler()]
+		var trimmed_yaws := PackedFloat32Array([target_yaw])
+		var trimmed_joints: Array[PackedFloat32Array] = [robot.get_joint_angles()]
+		var trimmed_events: Array = [[]]
+		for waypoint_index in range(first_pickup_index, world_points.size()):
+			trimmed_points.append(world_points[waypoint_index])
+			trimmed_orientations.append(world_orientations[waypoint_index])
+			trimmed_yaws.append(yaw_radians[waypoint_index])
+			trimmed_joints.append(joint_waypoints[waypoint_index])
+			trimmed_events.append(all_events[waypoint_index].duplicate(true))
+		world_points = trimmed_points
+		world_orientations = trimmed_orientations
+		yaw_radians = trimmed_yaws
+		joint_waypoints = trimmed_joints
+		parsed["waypoint_events"] = trimmed_events
 	if not planner.plan_world_path(world_points, parsed.feed_mm_s, parsed.acceleration_mm_s2,
 		parsed.junction_deviation_mm, yaw_radians, parsed.get("waypoint_events", []), world_orientations, joint_waypoints):
 		return false
