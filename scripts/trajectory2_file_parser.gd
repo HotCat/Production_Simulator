@@ -34,6 +34,7 @@ static func parse_text(text: String, source_name: String = "trajectory2") -> Dic
 	var joint_degrees: Array[PackedFloat32Array] = []
 	var events: Array[Array] = []
 	var overlays: Dictionary = DEFAULT_OVERLAYS.duplicate(true)
+	var pickup_dock: PackedFloat32Array = PackedFloat32Array()
 	var line_number := 0
 
 	for raw_line in text.split("\n"):
@@ -46,10 +47,10 @@ static func parse_text(text: String, source_name: String = "trajectory2") -> Dic
 			continue
 		if line.begins_with("[") and line.ends_with("]"):
 			section = line.substr(1, line.length() - 2).strip_edges().to_lower()
-			if section not in ["trajectory", "overlays", "waypoints"]:
+			if section not in ["trajectory", "overlays", "pickup", "waypoints"]:
 				return _error("%s:%d: unknown section [%s]" % [source_name, line_number, section])
 			continue
-		if section in ["trajectory", "overlays"] and line.contains("="):
+		if section in ["trajectory", "overlays", "pickup"] and line.contains("="):
 			var assignment := line.split("=", false, 1)
 			var key := assignment[0].strip_edges().to_lower()
 			var value := assignment[1].strip_edges()
@@ -61,6 +62,19 @@ static func parse_text(text: String, source_name: String = "trajectory2") -> Dic
 				if parsed_bool == null:
 					return _error("%s:%d: overlay value must be true/false" % [source_name, line_number])
 				overlays[canonical] = parsed_bool
+				continue
+			if section == "pickup":
+				if key != "dock":
+					return _error("%s:%d: unknown pickup parameter %s" % [source_name, line_number, key])
+				var dock_fields := value.replace(",", " ").split(" ", false)
+				if dock_fields.size() != 12:
+					return _error("%s:%d: dock needs exactly X Y Z Pitch Roll Yaw J1 J2 J3 J4 J5 J6" % [source_name, line_number])
+				pickup_dock = PackedFloat32Array()
+				for dock_field in dock_fields:
+					var dock_number := _parse_number(dock_field.strip_edges())
+					if is_nan(dock_number):
+						return _error("%s:%d: dock contains a non-numeric value" % [source_name, line_number])
+					pickup_dock.append(dock_number)
 				continue
 			match key:
 				"feed_mm_s":
@@ -133,7 +147,7 @@ static func parse_text(text: String, source_name: String = "trajectory2") -> Dic
 	return {"ok": true, "feed_mm_s": feed, "acceleration_mm_s2": acceleration,
 		"junction_deviation_mm": junction, "loop": loop, "coordinates_mm": coordinates,
 		"pitch_degrees": pitch, "roll_degrees": roll, "yaw_degrees": yaw,
-		"joint_degrees": joint_degrees,
+		"joint_degrees": joint_degrees, "pickup_dock": pickup_dock,
 		"waypoint_events": events, "overlays": overlays}
 
 static func _parse_number(value: String) -> float:

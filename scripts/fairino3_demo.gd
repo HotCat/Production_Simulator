@@ -71,6 +71,10 @@ var pickup_grasp_commanded := false
 var pickup_waiting_for_grasp := false
 var pickup_jaw_closing := false
 var pickup_jaw_close_elapsed := 0.0
+var pickup_start_basis := Basis.IDENTITY
+var pickup_dock_position := Vector3.ZERO
+var pickup_dock_basis := Basis.IDENTITY
+var pickup_dock_configured := false
 var pendant_jog_frame := "Base"
 var pendant_jog_position := Vector3.ZERO
 var pendant_base_angles := Vector3.ZERO
@@ -375,6 +379,7 @@ func _start_pickup(strategy: String, jaw_rotation: Vector3) -> void:
 		# axis onto the product depth and closes across its 4 mm thickness.
 		gripper.call("set_product_span", 0.0045 if strategy == "long side wall" else 0.03795)
 		gripper.call("set_jaws_closed", false)
+	pickup_start_basis = robot.get_tcp_world_basis()
 	# The gripper extends roughly 130 mm below the flange. Derive the grasp TCP
 	# from the product's current origin and the exact seating offset used by
 	# _attach_product_to_gripper(). This makes the jaws arrive at the product,
@@ -389,12 +394,28 @@ func _start_pickup(strategy: String, jaw_rotation: Vector3) -> void:
 	last_pickup_basis = pickup_flange_basis
 	var place := Vector3(0.40, 0.30, 0.16)
 	var points: Array[Vector3] = [robot.get_tcp_world_position(), approach, grasp, approach, place]
+	if pickup_dock_configured and points[0].distance_to(pickup_dock_position) > 0.001:
+		points.insert(1, pickup_dock_position)
 	pickup_points_total_length = 0.0
 	for index in range(points.size() - 1):
 		pickup_points_total_length += points[index].distance_to(points[index + 1])
-	pickup_grasp_progress = (points[0].distance_to(points[1]) + points[1].distance_to(points[2])) / maxf(pickup_points_total_length, 0.000001)
-	var events: Array = [[], [], [{"type": "trigger", "key": "grip_close"}], [], []]
-	pickup_planner.plan_world_path(points, 80.0, 300.0, 1.0, PackedFloat32Array(), events)
+	var grasp_index := points.find(grasp)
+	pickup_grasp_progress = 0.0
+	for point_index in range(grasp_index):
+		pickup_grasp_progress += points[point_index].distance_to(points[point_index + 1])
+	pickup_grasp_progress /= maxf(pickup_points_total_length, 0.000001)
+	var events: Array = []
+	for point_index in points.size():
+		events.append([])
+	# Keep the existing grasp trigger attached to the grasp waypoint after an
+	# optional dock positioning point is inserted.
+	if grasp_index >= 0:
+		events[grasp_index].append({"type": "trigger", "key": "grip_close"})
+	var pickup_orientations: Array[Vector3] = []
+	for point_index in points.size():
+		pickup_orientations.append(pickup_start_basis.get_euler().lerp(pickup_flange_basis.get_euler(), clampf(float(point_index) / maxf(float(points.size() - 1), 1.0), 0.0, 1.0)))
+	pickup_orientations[grasp_index] = pickup_flange_basis.get_euler()
+	pickup_planner.plan_world_path(points, 80.0, 300.0, 1.0, PackedFloat32Array(), events, pickup_orientations)
 	pickup_planner.start()
 	_update_pickup_ui()
 
@@ -940,6 +961,13 @@ func _apply_trajectory2(path: String) -> bool:
 	var pitches: PackedFloat32Array = parsed["pitch_degrees"]
 	var rolls: PackedFloat32Array = parsed["roll_degrees"]
 	var yaws: PackedFloat32Array = parsed["yaw_degrees"]
+	pickup_dock_configured = false
+	var parsed_dock: PackedFloat32Array = parsed.get("pickup_dock", PackedFloat32Array()) as PackedFloat32Array
+	if parsed_dock.size() == 12:
+		pickup_dock_position = robot.urdf_position_to_world(Vector3(parsed_dock[0], parsed_dock[1], parsed_dock[2]) / 1000.0)
+		var dock_ros_basis := Basis.from_euler(Vector3(deg_to_rad(parsed_dock[4]), deg_to_rad(parsed_dock[3]), deg_to_rad(parsed_dock[5])))
+		pickup_dock_basis = robot.urdf_basis_to_world(dock_ros_basis)
+		pickup_dock_configured = true
 	for i in parsed.coordinates_mm.size():
 		world_points.append(robot.urdf_position_to_world(parsed.coordinates_mm[i] / 1000.0))
 		var ros_basis := Basis.from_euler(Vector3(deg_to_rad(rolls[i]), deg_to_rad(pitches[i]), deg_to_rad(yaws[i])))

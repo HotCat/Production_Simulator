@@ -8,6 +8,10 @@ acceleration_mm_s2 = 350
 junction_deviation_mm = 1
 loop = false
 
+[pickup]
+# Dock pose used before Long side / Thin side pickup. Units: FR3 mm/degrees.
+dock = 399.761 -160.292 300.267 -179.607 -0.260 0.007 -8.198 -106.048 -75.877 -88.500 90.201 81.809
+
 [overlays]
 status = false
 joints = true
@@ -19,7 +23,8 @@ pendant = false
 
 [waypoints]
 # X_mm  Y_mm  Z_mm  Pitch_deg  Roll_deg  yaw_deg  J1_deg J2_deg J3_deg J4_deg J5_deg J6_deg
-399.761 -160.292 300.267 -179.607 -0.260 0.007 -8.198 -106.048 -75.877 -88.500 90.201 81.809
+# 399.761 -160.292 300.267 -179.607 -0.260 0.007 -8.198 -106.048 -75.877 -88.500 90.201 81.809
+252.709 -160.376 301.266 -179.379 -0.483 -0.234 -12.594 -77.857 -104.821 -88.034 90.335 77.172
 
 Long side
 
