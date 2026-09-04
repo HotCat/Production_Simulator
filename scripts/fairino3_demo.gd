@@ -963,9 +963,10 @@ func _apply_trajectory2(path: String) -> bool:
 	var yaws: PackedFloat32Array = parsed["yaw_degrees"]
 	pickup_dock_configured = false
 	var parsed_dock: PackedFloat32Array = parsed.get("pickup_dock", PackedFloat32Array()) as PackedFloat32Array
+	var dock_ros_basis := Basis.IDENTITY
 	if parsed_dock.size() == 12:
 		pickup_dock_position = robot.urdf_position_to_world(Vector3(parsed_dock[0], parsed_dock[1], parsed_dock[2]) / 1000.0)
-		var dock_ros_basis := Basis.from_euler(Vector3(deg_to_rad(parsed_dock[4]), deg_to_rad(parsed_dock[3]), deg_to_rad(parsed_dock[5])))
+		dock_ros_basis = Basis.from_euler(Vector3(deg_to_rad(parsed_dock[4]), deg_to_rad(parsed_dock[3]), deg_to_rad(parsed_dock[5])))
 		pickup_dock_basis = robot.urdf_basis_to_world(dock_ros_basis)
 		pickup_dock_configured = true
 	for i in parsed.coordinates_mm.size():
@@ -977,6 +978,23 @@ func _apply_trajectory2(path: String) -> bool:
 		for joint_degrees in parsed.joint_degrees[i]:
 			joint_radians.append(deg_to_rad(joint_degrees))
 		joint_waypoints.append(joint_radians)
+	# A configured dock is authoritative for pickup triggers. The command syntax
+	# places Long side / Thin side after a waypoint, so the parser stores the
+	# event on that preceding waypoint. Replace that event waypoint with the dock
+	# pose to prevent an obsolete/default waypoint from being visited first.
+	if pickup_dock_configured:
+		var waypoint_events: Array = parsed.get("waypoint_events", [])
+		var dock_joints := PackedFloat32Array()
+		for index in 6:
+			dock_joints.append(deg_to_rad(parsed_dock[6 + index]))
+		for waypoint_index in waypoint_events.size():
+			for event in waypoint_events[waypoint_index]:
+				var event_key := str(event.get("key", "")).to_lower()
+				if event_key in ["pickup_long_side", "pickup_thin_side"]:
+					world_points[waypoint_index] = pickup_dock_position
+					world_orientations[waypoint_index] = pickup_dock_basis.get_euler()
+					yaw_radians[waypoint_index] = deg_to_rad(parsed_dock[5])
+					joint_waypoints[waypoint_index] = dock_joints.duplicate()
 	if not planner.plan_world_path(world_points, parsed.feed_mm_s, parsed.acceleration_mm_s2,
 		parsed.junction_deviation_mm, yaw_radians, parsed.get("waypoint_events", []), world_orientations, joint_waypoints):
 		return false
