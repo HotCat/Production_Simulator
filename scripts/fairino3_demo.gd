@@ -106,6 +106,9 @@ const MANUAL_YAW_SPEED_RAD_S := 1.5
 const RESET_URDF_POSITION := Vector3(0.22, 0.0, 0.30)
 const LABEL_FIXTURE_TCP_URDF_MM := Vector3(346.407, -213.059, 529.029)
 const LABEL_FIXTURE_TCP_RPY_DEG := Vector3(86.167, 32.259, -93.233) # pitch, roll, yaw
+const DEFAULT_PICKUP_DOCK_URDF_MM := Vector3(399.761, -160.292, 300.267)
+const DEFAULT_PICKUP_DOCK_RPY_DEG := Vector3(-179.607, -0.260, 0.007) # pitch, roll, yaw
+const DEFAULT_PICKUP_DOCK_JOINT_DEG := [-8.198, -106.048, -75.877, -88.500, 90.201, 81.809]
 
 
 func _ready() -> void:
@@ -961,14 +964,21 @@ func _apply_trajectory2(path: String) -> bool:
 	var pitches: PackedFloat32Array = parsed["pitch_degrees"]
 	var rolls: PackedFloat32Array = parsed["roll_degrees"]
 	var yaws: PackedFloat32Array = parsed["yaw_degrees"]
-	pickup_dock_configured = false
+	# Always start from the simulator's legacy dock as a safe default. A traj2
+	# [pickup] dock assignment below can replace it for custom fixtures.
+	pickup_dock_position = robot.urdf_position_to_world(DEFAULT_PICKUP_DOCK_URDF_MM / 1000.0)
+	var default_dock_ros_basis := Basis.from_euler(Vector3(
+		deg_to_rad(DEFAULT_PICKUP_DOCK_RPY_DEG.y),
+		deg_to_rad(DEFAULT_PICKUP_DOCK_RPY_DEG.x),
+		deg_to_rad(DEFAULT_PICKUP_DOCK_RPY_DEG.z)))
+	pickup_dock_basis = robot.urdf_basis_to_world(default_dock_ros_basis)
+	pickup_dock_configured = true
 	var parsed_dock: PackedFloat32Array = parsed.get("pickup_dock", PackedFloat32Array()) as PackedFloat32Array
-	var dock_ros_basis := Basis.IDENTITY
+	var dock_ros_basis := default_dock_ros_basis
 	if parsed_dock.size() == 12:
 		pickup_dock_position = robot.urdf_position_to_world(Vector3(parsed_dock[0], parsed_dock[1], parsed_dock[2]) / 1000.0)
 		dock_ros_basis = Basis.from_euler(Vector3(deg_to_rad(parsed_dock[4]), deg_to_rad(parsed_dock[3]), deg_to_rad(parsed_dock[5])))
 		pickup_dock_basis = robot.urdf_basis_to_world(dock_ros_basis)
-		pickup_dock_configured = true
 	for i in parsed.coordinates_mm.size():
 		world_points.append(robot.urdf_position_to_world(parsed.coordinates_mm[i] / 1000.0))
 		var ros_basis := Basis.from_euler(Vector3(deg_to_rad(rolls[i]), deg_to_rad(pitches[i]), deg_to_rad(yaws[i])))
@@ -985,15 +995,19 @@ func _apply_trajectory2(path: String) -> bool:
 	if pickup_dock_configured:
 		var waypoint_events: Array = parsed.get("waypoint_events", [])
 		var dock_joints := PackedFloat32Array()
-		for index in 6:
-			dock_joints.append(deg_to_rad(parsed_dock[6 + index]))
+		if parsed_dock.size() == 12:
+			for index in 6:
+				dock_joints.append(deg_to_rad(parsed_dock[6 + index]))
+		else:
+			for joint_degrees in DEFAULT_PICKUP_DOCK_JOINT_DEG:
+				dock_joints.append(deg_to_rad(joint_degrees))
 		for waypoint_index in waypoint_events.size():
 			for event in waypoint_events[waypoint_index]:
 				var event_key := str(event.get("key", "")).to_lower()
 				if event_key in ["pickup_long_side", "pickup_thin_side"]:
 					world_points[waypoint_index] = pickup_dock_position
 					world_orientations[waypoint_index] = pickup_dock_basis.get_euler()
-					yaw_radians[waypoint_index] = deg_to_rad(parsed_dock[5])
+					yaw_radians[waypoint_index] = deg_to_rad(parsed_dock[5] if parsed_dock.size() == 12 else DEFAULT_PICKUP_DOCK_RPY_DEG.z)
 					joint_waypoints[waypoint_index] = dock_joints.duplicate()
 	if not planner.plan_world_path(world_points, parsed.feed_mm_s, parsed.acceleration_mm_s2,
 		parsed.junction_deviation_mm, yaw_radians, parsed.get("waypoint_events", []), world_orientations, joint_waypoints):

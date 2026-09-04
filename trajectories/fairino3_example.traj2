@@ -10,7 +10,7 @@ loop = false
 
 [pickup]
 # Dock pose used before Long side / Thin side pickup. Units: FR3 mm/degrees.
-dock = 399.761 -160.292 300.267 -179.607 -0.260 0.007 -8.198 -106.048 -75.877 -88.500 90.201 81.809
+dock = 261.204 -120.215 321.356 -179.719 -0.441 -0.838 -4.093 -75.083 -102.208 -93.021 90.420 85.069
 
 [overlays]
 status = false
