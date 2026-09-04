@@ -395,7 +395,10 @@ func _start_pickup(strategy: String, jaw_rotation: Vector3) -> void:
 	pickup_grasp_position = grasp
 	last_pickup_grasp_position = grasp
 	last_pickup_basis = pickup_flange_basis
-	var place := Vector3(0.40, 0.30, 0.16)
+	# The place endpoint must follow the configured pickup dock. The previous
+	# hard-coded Vector3(0.40, 0.30, 0.16) is the legacy 399.761/-160.292/300.267
+	# pose and caused every Long/Thin-side cycle to revisit that obsolete point.
+	var place: Vector3 = pickup_dock_position if pickup_dock_configured else Vector3(0.40, 0.30, 0.16)
 	var points: Array[Vector3] = [robot.get_tcp_world_position(), approach, grasp, approach, place]
 	if pickup_dock_configured and points[0].distance_to(pickup_dock_position) > 0.001:
 		points.insert(1, pickup_dock_position)
