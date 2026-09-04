@@ -72,10 +72,15 @@ func _build_fixture() -> void:
 func set_flat_tcp_reference(tcp_world_position: Vector3, tcp_world_basis: Basis, tool_clearance_m := 0.130) -> void:
 	# The gripper fingers extend 130 mm from the TCP. Offset the fixture pocket
 	# along the uploaded tool axis so the jaw remains clear of the frame rails.
-	global_basis = tcp_world_basis.orthonormalized()
-	global_position = tcp_world_position + global_basis * Vector3(0.0, 0.0, tool_clearance_m)
+	# Rotate the frame 180° around its local vertical axis to put the missing
+	# section on the required approach side. Keep the clearance offset based on
+	# the unrotated TCP tool axis so the pocket does not move to the opposite side.
+	var tcp_basis := tcp_world_basis.orthonormalized()
+	global_basis = (tcp_basis * Basis(Vector3.UP, PI)).orthonormalized()
+	global_position = tcp_world_position + tcp_basis * Vector3(0.0, 0.0, tool_clearance_m)
 	set_meta("reference_tcp_world_m", str(tcp_world_position))
 	set_meta("tool_clearance_mm", tool_clearance_m * 1000.0)
+	set_meta("frame_rotation_deg", 180.0)
 
 
 func _add_box(node_name: String, size: Vector3, position: Vector3, material: Material) -> MeshInstance3D:
