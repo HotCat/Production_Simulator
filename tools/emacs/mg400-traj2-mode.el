@@ -4,7 +4,9 @@
 ;; Cartesian format. Each waypoint has XYZ/Pitch/Roll/Yaw plus J1-J6 (degrees).
 ;; C-c C-v validates locally, C-c C-r starts Godot, and
 ;; C-c C-u uploads the saved file to an already-running Fairino3 scene. C-c C-p
-;; captures the current live robot pose and appends all 12 fields.
+;; captures the current live robot pose and appends all 12 fields. C-c C-g
+;; sends exactly 12 numeric fields in the active region as an immediate goto
+;; command to the running simulator.
 
 (require 'conf-mode)
 (require 'subr-x)
@@ -16,6 +18,8 @@
   "Godot executable used to launch the simulator." :type 'file :group 'mg400-traj2)
 (defcustom mg400-traj2-runtime-command ".runtime/trajectory2.command"
   "Project-relative command file used for runtime upload." :type 'string :group 'mg400-traj2)
+(defcustom mg400-traj2-runtime-goto ".runtime/trajectory2.goto"
+  "Project-relative command file used for a live 12-field goto pose." :type 'string :group 'mg400-traj2)
 (defvar mg400-traj2--process nil)
 (defconst mg400-traj2--number
   "[-+]?[0-9]+\\(?:\\.[0-9]*\\)?\\(?:[eE][-+]?[0-9]+\\)?\\|[-+]?\\.[0-9]+\\(?:[eE][-+]?[0-9]+\\)?")
@@ -131,6 +135,25 @@
       (insert trajectory-file "\n# upload " (format "%.6f" (float-time)) "\n"))
     (message "Uploaded trajectory2 to running simulator: %s" buffer-file-name)))
 
+(defun mg400-traj2-goto-region (beg end)
+  "Send the active region's 12-field FR3 pose to the running simulator.
+The region must contain exactly X Y Z Pitch Roll Yaw J1 J2 J3 J4 J5 J6,
+all in the same millimetre/degree units as a .traj2 waypoint."
+  (interactive "r")
+  (unless (use-region-p) (user-error "Mark one 12-field waypoint first"))
+  (let* ((tokens (split-string (string-trim (buffer-substring-no-properties beg end))
+                               "[[:space:]]+" t)))
+    (unless (= (length tokens) 12)
+      (user-error "Goto region needs exactly 12 numeric fields (got %d)" (length tokens)))
+    (mapc (lambda (token) (mg400-traj2--number token (line-number-at-pos beg))) tokens)
+    (let* ((root (file-name-as-directory (expand-file-name (mg400-traj2--project-root))))
+           (command (expand-file-name mg400-traj2-runtime-goto root)))
+      (make-directory (file-name-directory command) t)
+      (with-temp-file command
+        (insert (mapconcat #'identity tokens " ") "\n# goto " (format "%.6f" (float-time)) "\n"))
+      (deactivate-mark)
+      (message "Sent FR3 goto pose to running simulator"))))
+
 (defun mg400-traj2--waypoint-section-end ()
   "Return the insertion position at the end of the [waypoints] section."
   (save-excursion
@@ -184,6 +207,7 @@
     (define-key map (kbd "C-c C-v") #'mg400-traj2-validate)
     (define-key map (kbd "C-c C-r") #'mg400-traj2-run)
     (define-key map (kbd "C-c C-u") #'mg400-traj2-upload)
+    (define-key map (kbd "C-c C-g") #'mg400-traj2-goto-region)
     (define-key map (kbd "C-c C-p") #'mg400-traj2-capture-pose)
     (define-key map (kbd "C-c C-i") #'mg400-traj2-insert-waypoint)
     (define-key map (kbd "C-c C-s") #'save-buffer) map))

@@ -80,6 +80,7 @@ var trajectory2_active := false
 var trajectory2_path := ""
 var trajectory2_mtime := 0
 var trajectory2_command_signature := 0
+var trajectory2_goto_signature := 0
 var trajectory2_poll_elapsed := 0.0
 var pending_trajectory2_path := ""
 var runtime_pose_publish_elapsed := 0.0
@@ -858,6 +859,15 @@ func _poll_runtime_trajectory2(delta: float) -> void:
 	if trajectory2_poll_elapsed < 0.25:
 		return
 	trajectory2_poll_elapsed = 0.0
+	var goto_path := ProjectSettings.globalize_path("res://.runtime/trajectory2.goto")
+	if FileAccess.file_exists(goto_path):
+		var goto_file := FileAccess.open(goto_path, FileAccess.READ)
+		if goto_file != null:
+			var goto_text := goto_file.get_as_text()
+			var goto_signature := hash(goto_text)
+			if goto_signature != trajectory2_goto_signature:
+				_apply_runtime_goto(goto_text)
+				trajectory2_goto_signature = goto_signature
 	var command_path := ProjectSettings.globalize_path("res://.runtime/trajectory2.command")
 	if not FileAccess.file_exists(command_path):
 		return
@@ -878,6 +888,44 @@ func _poll_runtime_trajectory2(delta: float) -> void:
 		return
 	_apply_trajectory2(requested)
 	trajectory2_command_signature = command_signature
+
+
+func _apply_runtime_goto(command_text: String) -> bool:
+	var line := command_text.get_slice("\n", 0).strip_edges()
+	var fields := line.split(" ", false)
+	var values: Array[float] = []
+	for field in fields:
+		if not field.is_empty():
+			if not field.is_valid_float():
+				status.text = "GOTO ERROR\nExpected 12 numeric fields"
+				return false
+			values.append(field.to_float())
+	if values.size() != 12:
+		status.text = "GOTO ERROR\nExpected 12 numeric fields, got %d" % values.size()
+		return false
+	var urdf_position := Vector3(values[0], values[1], values[2]) / 1000.0
+	var world_position := robot.urdf_position_to_world(urdf_position)
+	var joint_radians := PackedFloat32Array()
+	for index in 6:
+		joint_radians.append(deg_to_rad(values[6 + index]))
+	# A goto is an operator jog, not a new looping program. Apply the explicit
+	# J1-J6 branch directly so the robot reaches the requested pose without a
+	# second IK solve selecting a different elbow/wrist configuration.
+	automatic = false
+	axis_override = true
+	trajectory2_active = false
+	planner.pause()
+	robot.set_joint_angles_target(joint_radians, true)
+	target_position = robot.get_tcp_world_position()
+	base_target_position = target_position
+	target_world_euler = robot.get_tcp_world_basis().get_euler()
+	target_yaw = target_world_euler.y
+	var cartesian_error := target_position.distance_to(world_position)
+	reachable = cartesian_error < 0.003
+	status.text = "GOTO POSE APPLIED  ·  TCP %.1f %.1f %.1f mm  ·  %s" % [
+		target_position.x * 1000.0, target_position.y * 1000.0, target_position.z * 1000.0,
+		("REACHABLE" if reachable else "CLAMPED / XYZ MISMATCH")]
+	return reachable
 
 
 func _apply_trajectory2(path: String) -> bool:
