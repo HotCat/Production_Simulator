@@ -374,11 +374,19 @@ func _finish_return_product() -> void:
 	return_departing = false
 	axis_override = true
 	if resume_trajectory2_after_pickup:
+		var main_planner_state := planner.get_state()
 		resume_trajectory2_after_pickup = false
-		automatic = true
-		axis_override = false
-		if planner.get_state() == Planner.MotionState.PAUSED:
+		# If the return command was on the final waypoint, planner.advance() has
+		# already marked the main trajectory COMPLETED. Calling automatic=true in
+		# that state makes the next frame replay planner.get_current_pose(), which
+		# is exactly the numeric prefix pose above `return product` (the reported
+		# ghost move). Resume only a genuinely paused, still-running program.
+		if main_planner_state == Planner.MotionState.PAUSED:
+			automatic = true
+			axis_override = false
 			planner.resume()
+		else:
+			automatic = false
 	_update_pickup_ui()
 
 
